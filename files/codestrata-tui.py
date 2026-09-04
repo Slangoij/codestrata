@@ -20,7 +20,7 @@ ssh 너머에서도 된다 — 그림은 이스케이프 시퀀스라 지금 앉
   (버튼을 누른 채 움직일 때만 이벤트가 오는 모드) — 클릭 직전에 그 자리로 hover 를 한 번 보낸다.
 - 셀의 픽셀 크기를 터미널이 알려 주지 않으면(일부 tmux 경로) 폭:높이 = 1:2 로 가정한다.
 """
-import base64, json, os, re, select, shutil, signal, socket, struct, subprocess, sys, termios, time, tty, urllib.request
+import base64, json, os, re, select, shutil, signal, socket, struct, subprocess, sys, termios, time, tty, unicodedata, urllib.request
 
 OUT_DIR   = os.path.expanduser('~/debug-captures/codebase-3d')
 def work_dir():
@@ -291,8 +291,31 @@ def draw(png_b64, cols, rows):
             seq.append(placeholder_grid(cols, rows)); _grid = (cols, rows)
     out(''.join(seq))
 
-def status(rows, text):
-    out(f'\x1b[{rows};1H\x1b[2K\x1b[7m {text} \x1b[0m')
+def dwidth(t):
+    """터미널이 실제로 쓰는 칸 수. 한글·전각은 2칸, 결합문자는 0칸이다."""
+    w = 0
+    for ch in t:
+        if unicodedata.combining(ch): continue
+        w += 2 if unicodedata.east_asian_width(ch) in 'WF' else 1
+    return w
+
+def dclip(t, limit):
+    """limit 칸을 넘지 않게 자른다. 자르면 끝에 … 를 붙인다."""
+    if dwidth(t) <= limit: return t
+    out_s, w = [], 0
+    for ch in t:
+        cw = 0 if unicodedata.combining(ch) else (2 if unicodedata.east_asian_width(ch) in 'WF' else 1)
+        if w + cw > limit - 1: break
+        out_s.append(ch); w += cw
+    return ''.join(out_s) + '…'
+
+def status(rows, text, cols=None):
+    # ⚠️ 상태 줄이 터미널 폭을 넘으면 줄바꿈되고, 그때마다 화면이 한 줄씩 밀려 올라간다.
+    # 예전에는 매 프레임 그림이 화면을 덮어 안 보였지만, 자리표시자는 한 번만 찍으므로
+    # 밀린 자국이 그대로 쌓인다(2026-09-04 사용자 보고). 폭에 맞춰 자르고 줄바꿈도 끈다.
+    if cols:
+        text = dclip(text, max(4, cols - 3))       # 앞뒤 공백 두 칸 + 여유 한 칸
+    out(f'\x1b[?7l\x1b[{rows};1H\x1b[2K\x1b[7m {text} \x1b[0m\x1b[?7h')
 
 # ── 입력 → CDP ───────────────────────────────────────────────────────────────
 MOUSE_RE = re.compile(rb'\x1b\[<(\d+);(\d+);(\d+)([Mm])')
@@ -460,7 +483,7 @@ def main():
             H = max(64, int(W * box_h / box_w))            # 상자와 같은 종횡비 — 늘어나지 않는다
             return cols, rows, rows_img, W, H
         cols, rows, rows_img, W, H = geometry()
-        status(rows, f'{os.path.basename(src)} 여는 중… (크로미움 기동)')
+        status(rows, f'{os.path.basename(src)} 여는 중… (크로미움 기동)', cols)
         proc, prof, cdp = launch(view, W, H)
         cdp.call('Page.enable')
         cdp.call('Emulation.setDeviceMetricsOverride', {'width': W, 'height': H, 'deviceScaleFactor': SS, 'mobile': False})
@@ -470,7 +493,9 @@ def main():
         signal.signal(signal.SIGWINCH, lambda *_: resized.__setitem__(0, True))
         # 자리표시자 방식은 tmux 가 페인 경계를 지켜 주므로 경고가 필요 없다. 직접 배치일 때만 알린다.
         warn = (f'  ·  ⚠tmux 페인 {panes}개 + 직접배치 — 그림이 어긋납니다. prefix z 로 확대하거나 CODESTRATA_PLACEMENT=unicode' if panes > 1 and not use_unicode() else '')
-        help_line = f'{os.path.basename(src)}  ·  hjkl/ud 회전·시간 · 화살표 이동 · +- 줌 · Enter 선택 · Tab 파일 · Backspace 목록으로 · p 패닝 · ? 도움말 · q 종료  ·  {cols}×{rows_img}칸 {W}×{H}px×{SS:g} 셀{cw}×{ch}[{cell_src}] {'자리표시자' if use_unicode() else '직접배치'}{warn}'
+        help_line = (f'{os.path.basename(src)} · hjkl 회전 · ←→ 이동 · +- 줌 · Enter 선택 · Tab 파일 · '
+                     f'p 패닝 · ? 도움말 · q 종료 · 셀{cw}×{ch}[{cell_src}]'
+                     f'{" 자리표시자" if use_unicode() else " 직접배치"}{warn}')
         last_input = time.time(); frames = 0; t_frame = 0
         while True:
             if resized[0]:
@@ -498,8 +523,8 @@ def main():
             if LOG:
                 try: log('frame', frames, f'{t_frame*1000:.0f}ms', len(shot), cdp.call('Runtime.evaluate', {'expression': 'JSON.stringify(window.__cs ? {th:__cs.cam.theta.toFixed(3), d:__cs.cam.dist.toFixed(1), tx:__cs.cam.tx.toFixed(1)} : {title:document.title, href:location.href.slice(-40), active:document.activeElement?.href || document.activeElement?.tagName, body:document.body.innerText.slice(0,80)})', 'returnByValue': True})['result'].get('value'))
                 except Exception as e: log('frame', frames, 'eval 실패', e)
-            status(rows, f'{help_line}  ·  {t_frame*1000:.0f}ms/프레임'
-                       f'{" ·픽셀좌표" if br.pixel else ""}{" ·패닝" if br.pan else ""}')
+            status(rows, f'{help_line} · {t_frame*1000:.0f}ms'
+                       f'{" ·픽셀" if br.pixel else ""}{" ·패닝" if br.pan else ""}', cols)
     finally:
         # 단계마다 따로 감싼다 — tmux 창이 먼저 닫히면 터미널 쓰기가 EIO 로 죽는데,
         # 그 예외가 파일 정리까지 건너뛰게 만들어 프로필·사본이 남았다(2026-09-02).

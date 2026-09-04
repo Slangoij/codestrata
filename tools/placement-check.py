@@ -74,6 +74,15 @@ first = rows_seen.get(1, '')
 cols_ok = all(first[i * 3 + 2] == cstui.RCD[i] for i in range(min(COLS, len(first) // 3)))
 check('⑤ 첫 줄의 열 결합문자가 0,1,2… 순서다', cols_ok, f'{len(first) // 3}칸 확인')
 
+# 상태 줄이 폭을 넘으면 줄바꿈되어 화면이 한 줄씩 밀린다. 자리표시자는 한 번만 찍으므로
+# 그 자국이 그대로 쌓인다(2026-09-04 사용자 보고: "밑에 도움말이 누적된다").
+STATUS = re.compile(r'\x1b\[\?7l\x1b\[\d+;1H\x1b\[2K\x1b\[7m(.*?)\x1b\[0m\x1b\[\?7h', re.S)
+widths = [cstui.dwidth(m) for m in STATUS.findall(uni)]
+check('⑦ 상태 줄이 터미널 폭을 넘지 않는다', bool(widths) and max(widths) <= COLS - 1,
+      f'{len(widths)}회 · 최대 {max(widths) if widths else 0}칸 (폭 {COLS})')
+check('⑧ 상태 줄 쓰기에 줄바꿈 끄기가 붙어 있다', uni.count('\x1b[?7l') >= 1 and uni.count('\x1b[?7h') >= 1,
+      f"?7l {uni.count(chr(27) + '[?7l')}회")
+
 dir_ = run('direct')
 check('⑥ 음성 대조군 — 직접 배치에는 자리표시자가 없다',
       PH not in dir_ and 'a=T,f=100' in dir_,
