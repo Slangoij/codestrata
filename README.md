@@ -1,0 +1,118 @@
+# codestrata
+
+깃 저장소를 **구조 × 시간**의 3D 지층으로 세워 보는 도구입니다. 바닥 평면은 파일들의 구조이고,
+위로 솟는 축은 시간입니다. 구슬 하나가 커밋 하나에서 일어난 한 파일의 변경입니다.
+
+어느 파일이 함께 바뀌어 왔는지, 어느 시기에 무엇이 들끓었는지, 지금 손대는 파일이 어떤 이웃을
+끌고 다니는지를 한 화면에서 봅니다. 브라우저에서도 보고, **터미널 안에서도** 봅니다.
+
+> **English** — `codestrata` turns a git repository into a 3D "strata" view: the ground plane is
+> file structure, the vertical axis is time, and each bead is one file's change in one commit.
+> It renders to a single dependency-free HTML file, and can also draw itself **inside your
+> terminal** using the kitty graphics protocol. Python standard library only.
+
+---
+
+## 빠른 시작
+
+```bash
+git clone https://github.com/Slangoij/codestrata.git
+cd codestrata && bash install.sh          # ~/.local/bin 에 명령 세 개를 건다
+codestrata ~/내/저장소                     # HTML 을 만들고 주소를 알려 준다
+```
+
+`~/.local/bin` 이 `PATH` 에 없으면 설치 스크립트가 알려 줍니다.
+
+## 세 가지 보기
+
+| 명령 | 무엇 | 언제 |
+|---|---|---|
+| `codestrata <저장소>` | 단일 HTML 을 만들고 작은 웹 서버로 띄운다 | 기본. 가장 부드럽고 정확하다 |
+| `codestrata-tui <저장소명>` | 헤드리스 크로미움 화면을 터미널 셀에 픽셀로 뿌린다 | 터미널을 벗어나기 싫을 때 |
+| `codestrata-cli <저장소>` | 크로미움 없이 점자 문자로 3D 를 그린다 | 그래픽을 못 그리는 터미널에서 |
+
+```bash
+codestrata                       # 지금 위치가 속한 저장소
+codestrata ~/repo-a ~/repo-b     # 여러 개를 한 번에
+codestrata ~                     # 저장소가 아닌 폴더 → 그 아래 저장소를 전부 찾아 그린다
+codestrata <저장소> --no-serve   # 파일만 만들고 서버는 안 띄운다
+codestrata <저장소> --port 9000 --out ~/어딘가
+```
+
+산출물은 `~/debug-captures/codebase-3d/<저장소명>.html` 이고 의존성 없는 단일 파일입니다.
+같은 폴더의 `index.html` 이 목록이므로 주소는 파일명 없이 열면 됩니다.
+
+## 조작
+
+마우스로 끌면 회전, 휠은 줌, `Shift`+드래그와 우클릭 드래그는 이동입니다. 커밋이나 파일을 클릭하면
+그 노드가 회전 중심이 되고, 휠 줌은 커서가 가리키는 지점을 붙잡습니다.
+
+키보드만으로도 전부 됩니다. `?` 를 누르면 도움말이 뜹니다. 태블릿과 휴대폰에서는 손가락 하나로
+회전, 두 손가락으로 줌과 이동이 됩니다.
+
+터미널 화면(`codestrata-tui`)에서는 `p` 로 이동 모드를 켭니다. 대부분의 터미널이 `Shift`+드래그를
+자기 텍스트 선택으로 가져가 앱에 넘기지 않기 때문입니다. `q` 로 나갑니다.
+
+## 어떤 환경을 위해 만들었나
+
+터미널에서 하루를 보내고, 여러 저장소를 오가며, 원격 서버에 접속해 일하는 사람을 염두에 두고
+만들었습니다. 그래서 산출물이 단일 HTML 이고, 서버 없이도 파일 하나로 열리며, ssh 너머의
+터미널에서도 그림이 나옵니다.
+
+| | 필요한 것 |
+|---|---|
+| 공통 | `git`, `python3` — **표준 라이브러리만** 씁니다 |
+| 브라우저 보기 | WebGL 이 되는 브라우저. three.js 는 CDN 에서 받습니다 |
+| `codestrata-tui` | kitty 그래픽을 아는 터미널(kitty · Ghostty · WezTerm), `chromium`, tmux 안이면 `allow-passthrough on` |
+| `codestrata-cli` | 아무 터미널이나. 크로미움이 필요 없습니다 |
+| 선택 | [graphify](https://github.com/getzep/graphiti) 류의 코드 의존 그래프가 있으면 함께 그립니다. 없으면 co-change 만으로 그립니다 |
+
+리눅스에서 개발하고 확인했습니다(Ubuntu 24.04 · Python 3.12 · Ghostty + tmux 3.4).
+macOS 를 염두에 두고 GNU 전용 옵션은 피했지만 실제로 확인하지는 못했습니다. 윈도우는 대상이
+아닙니다.
+
+## 환경 변수
+
+터미널 화면에서만 씁니다. 대개 건드릴 일이 없습니다.
+
+| 변수 | 기본값 | 무엇 |
+|---|---|---|
+| `CODESTRATA_CELL` | 자동 감지 | 셀 하나의 픽셀 크기(`9x18` 형식). 터미널이 질의에 답하지 않을 때 직접 지정합니다 |
+| `CODESTRATA_SS` | `1.0` | 픽셀 밀도. 셀 크기를 못 구해 그림이 늘어나 보일 때 `2` 로 올립니다 |
+| `CODESTRATA_PLACEMENT` | `auto` | `unicode` 는 그림을 셀에 고정해 tmux 페인 경계를 지킵니다. `direct` 는 예전 방식입니다 |
+| `CODESTRATA_TUI_LOG` | 없음 | 입력과 카메라 상태를 파일로 기록합니다 |
+
+`codestrata-tui --probe` 는 그림을 그리지 않고 그 터미널이 셀 크기 질의에 무엇이라 답하는지만
+한 줄로 알려 줍니다. 글자가 뭉개져 보일 때 여기서부터 봅니다.
+
+## 검증
+
+`tools/` 안의 스크립트들이 가짜 터미널과 헤드리스 브라우저로 동작을 값으로 확인합니다.
+고친 뒤에 돌려 보십시오.
+
+```bash
+python3 tools/cell-check.py          # 셀 크기 감지 네 경로
+python3 tools/tui-check.py           # 터미널 화면: 프레임·드래그·휠·정리
+python3 tools/placement-check.py     # 그림을 셀에 고정하는 방식
+python3 tools/cli-check.py           # 문자 화면
+python3 tools/orbit-check.py         # 카메라: 회전 중심·이동·줌·선택  (websocket-client 필요)
+```
+
+## 한계
+
+소프트웨어 렌더라 터미널 화면은 초당 4~8 프레임입니다. 3D 는 정확한 수치 비교에 쓰는 도구가
+아니라 형태와 이웃 관계를 보는 도구입니다. 커밋이 아주 많은 저장소는 그리는 데 시간이 걸리며,
+`codestrata ~` 로 훑을 때는 커밋 5,000 개가 넘는 저장소를 남의 벤더 트리로 보고 건너뜁니다.
+
+작성자 이름과 이메일은 저장소에서 뽑지 않습니다. 산출물에는 커밋 해시와 메시지, 파일 경로만
+들어갑니다.
+
+## 고쳤으면 하는 곳
+
+쓰다가 불편하거나 안 되는 부분이 있으면 **slangoij@gmail.com** 으로 메일 주십시오.
+어떤 터미널과 어떤 운영체제에서 무엇을 하려다 무엇이 나왔는지 적어 주시면 재현이 빠릅니다.
+이슈로 남기셔도 좋습니다.
+
+## 라이선스
+
+MIT. `LICENSE` 를 보십시오.

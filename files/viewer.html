@@ -1,0 +1,1422 @@
+<meta charset="utf-8">
+<title>Commit Strata</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+:root{
+  --ground:#0D121B; --ground-2:#0A0E16;
+  --panel:rgba(19,24,34,.86); --panel-solid:#131822;
+  --line:#2C3648; --line-soft:#212938;
+  --ink:#DCE3EF; --ink-dim:#9DA8BE; --ink-mute:#8592A8;
+  --old:#5265D6; --mid:#3FBDB4; --new:#FFC272;
+  --accent:#FFB35C;
+  --font-ui:'Archivo','Helvetica Neue',Arial,sans-serif;
+  --font-mono:'IBM Plex Mono','SFMono-Regular',Consolas,monospace;
+}
+*{box-sizing:border-box}
+/* hidden 속성은 display 를 주는 규칙에 진다 — id 선택자가 더 구체적이라
+   #help{display:grid} 가 [hidden] 을 이겨 도움말이 항상 떠 있었다.
+   (아티팩트 스켈레톤에는 이 리셋이 들어 있어 그쪽에서는 안 보였다 —) */
+[hidden]{display:none!important}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:var(--font-ui); overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+#stage{position:fixed; inset:0}
+canvas{display:block; cursor:grab; touch-action:none}
+canvas.dragging{cursor:grabbing}
+
+/* ── 오버레이 크롬 ─────────────────────────────── */
+.chrome{position:fixed; z-index:10; pointer-events:none}
+.chrome > *{pointer-events:auto}
+
+#hud{top:0; left:0; padding:20px 24px}
+#hud h1{
+  margin:0; font-size:17px; font-weight:700; letter-spacing:-.01em;
+  display:flex; align-items:baseline; gap:10px;
+}
+#hud h1 .repo{font-family:var(--font-mono); font-weight:500; color:var(--accent); font-size:15px}
+#hud .facts{
+  margin-top:7px; display:flex; gap:16px; flex-wrap:wrap;
+  font-family:var(--font-mono); font-size:11px; color:var(--ink-mute);
+  font-variant-numeric:tabular-nums;
+}
+#hud .facts b{color:var(--ink-dim); font-weight:500}
+
+/* ── 우측 인스펙터 ─────────────────────────────── */
+#inspect{
+  top:0; right:0; width:298px; max-width:44vw; height:100%;
+  background:var(--panel); backdrop-filter:blur(14px);
+  border-left:1px solid var(--line);
+  display:flex; flex-direction:column;
+}
+#inspect .head{padding:18px 20px 14px; border-bottom:1px solid var(--line-soft)}
+.eyebrow{
+  font-size:10px; font-weight:600; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--ink-mute); margin:0 0 8px;
+}
+#ins-path{
+  font-family:var(--font-mono); font-size:12.5px; line-height:1.5;
+  word-break:break-all; color:var(--ink); margin:0;
+}
+#ins-path.empty{color:var(--ink-mute); font-style:normal}
+#ins-stats{
+  display:grid; grid-template-columns:1fr 1fr; gap:1px;
+  background:var(--line-soft); border-bottom:1px solid var(--line-soft);
+}
+#ins-stats div{background:var(--panel-solid); padding:12px 14px}
+#ins-stats .k{font-size:9.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-mute)}
+#ins-stats .v{
+  font-family:var(--font-mono); font-size:18px; font-weight:500;
+  margin-top:3px; font-variant-numeric:tabular-nums;
+}
+#ins-stats .v small{font-size:11px; color:var(--ink-mute)}
+#ins-list{flex:1; overflow-y:auto; overflow-x:hidden}
+#ins-list::-webkit-scrollbar{width:9px}
+#ins-list::-webkit-scrollbar-thumb{background:var(--line); border:3px solid var(--panel-solid)}
+.ev{
+  padding:9px 20px; border-bottom:1px solid var(--line-soft);
+  display:grid; grid-template-columns:auto 1fr; gap:3px 10px; align-items:baseline;
+  cursor:pointer;
+}
+.ev:hover{background:rgba(255,179,92,.06)}
+.ev .sha{
+  font-family:var(--font-mono); font-size:10.5px; color:var(--accent);
+  font-variant-numeric:tabular-nums;
+}
+.ev .date{font-family:var(--font-mono); font-size:10px; color:var(--ink-mute); text-align:right}
+.ev .subj{
+  grid-column:1/-1; font-size:11.5px; line-height:1.45; color:var(--ink-dim);
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+.ev .delta{grid-column:1/-1; font-family:var(--font-mono); font-size:10px}
+.ev .delta .a{color:#6FBF8B} .ev .delta .d{color:#D9705F}
+.hint{padding:16px 20px; font-size:11.5px; line-height:1.6; color:var(--ink-mute)}
+.hint kbd{
+  font-family:var(--font-mono); font-size:10px; background:var(--line-soft);
+  border:1px solid var(--line); border-radius:3px; padding:1px 5px; color:var(--ink-dim);
+}
+
+/* ── 하단 타임라인 ─────────────────────────────── */
+#timeline{
+  bottom:0; left:0; right:298px; padding:14px 24px 16px;
+  background:linear-gradient(to top,var(--ground) 55%,transparent);
+}
+#tl-meta{
+  display:flex; align-items:baseline; gap:12px; margin-bottom:9px;
+  font-family:var(--font-mono); font-size:11px; min-height:17px;
+}
+#tl-sha{color:var(--accent); font-weight:500}
+#tl-date{color:var(--ink-mute); font-variant-numeric:tabular-nums}
+#tl-subj{
+  color:var(--ink-dim); font-family:var(--font-ui); font-size:11.5px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1;
+}
+#tl-row{display:flex; align-items:center; gap:14px}
+button.play{
+  width:34px; height:34px; flex:none; border-radius:50%;
+  background:transparent; border:1px solid var(--line);
+  color:var(--ink-dim); cursor:pointer; font-size:12px;
+  display:grid; place-items:center; transition:border-color .15s,color .15s;
+}
+button.play:hover{border-color:var(--accent); color:var(--accent)}
+button.play:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+#scrub{
+  flex:1; -webkit-appearance:none; appearance:none; height:26px;
+  background:transparent; cursor:pointer;
+}
+#scrub::-webkit-slider-runnable-track{
+  height:2px; background:var(--line);
+  background-image:linear-gradient(to right,var(--old),var(--mid),var(--new));
+  background-size:var(--fill,100%) 100%; background-repeat:no-repeat;
+}
+#scrub::-moz-range-track{height:2px; background:var(--line)}
+#scrub::-webkit-slider-thumb{
+  -webkit-appearance:none; width:13px; height:13px; border-radius:50%;
+  background:var(--accent); margin-top:-5.5px;
+  box-shadow:0 0 0 4px rgba(255,179,92,.16);
+}
+#scrub::-moz-range-thumb{
+  width:13px; height:13px; border:0; border-radius:50%; background:var(--accent);
+}
+#scrub:focus-visible{outline:2px solid var(--accent); outline-offset:4px}
+#tl-count{
+  font-family:var(--font-mono); font-size:11px; color:var(--ink-mute);
+  font-variant-numeric:tabular-nums; flex:none; min-width:64px; text-align:right;
+}
+
+/* ── 좌하단 컨트롤 ─────────────────────────────── */
+#controls{bottom:0; left:0; padding:0 24px 92px; display:flex; flex-direction:column; gap:14px}
+.group{display:flex; gap:7px; align-items:center; flex-wrap:wrap}
+.seg{display:flex; border:1px solid var(--line); border-radius:4px; overflow:hidden}
+.seg button{
+  background:transparent; border:0; color:var(--ink-mute); cursor:pointer;
+  font-family:var(--font-ui); font-size:10.5px; font-weight:500;
+  letter-spacing:.04em; padding:6px 11px; transition:background .15s,color .15s;
+}
+.seg button + button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:rgba(255,179,92,.13); color:var(--accent)}
+.seg button:hover:not([aria-pressed="true"]){color:var(--ink-dim)}
+.seg button:focus-visible{outline:2px solid var(--accent); outline-offset:-2px}
+#legend{display:flex; align-items:center; gap:9px; flex-wrap:wrap; font-size:10px; color:var(--ink-mute)}
+#legend .ramp{
+  width:96px; height:5px; border-radius:3px;
+  background:linear-gradient(to right,var(--old),var(--mid),var(--new));
+}
+#legend .ext{display:flex; gap:11px; flex-wrap:wrap; max-width:420px}
+#legend .ext span{display:flex; align-items:center; gap:5px; font-family:var(--font-mono)}
+#legend .ext i{width:7px; height:7px; border-radius:2px; display:block}
+
+#tip{
+  position:fixed; z-index:20; pointer-events:none; opacity:0;
+  background:var(--panel-solid); border:1px solid var(--line);
+  padding:5px 9px; font-family:var(--font-mono); font-size:11px;
+  color:var(--ink); white-space:nowrap; transition:opacity .12s;
+  border-radius:3px;
+}
+#tip.on{opacity:1}
+
+#tl-slice{
+  font-family:var(--font-mono); font-size:10.5px; color:var(--ground);
+  background:var(--accent); padding:2px 8px; border-radius:3px; font-weight:600;
+  letter-spacing:.02em; flex:none;
+}
+#help{inset:0; display:grid; place-items:center; background:rgba(8,11,17,.72); backdrop-filter:blur(3px)}
+#help .card{
+  background:var(--panel-solid); border:1px solid var(--line); border-radius:6px;
+  padding:22px 26px; max-width:520px; box-shadow:0 24px 70px rgba(0,0,0,.55);
+}
+#help dl{display:grid; grid-template-columns:auto 1fr; gap:7px 18px; margin:0}
+#help dt{
+  font-family:var(--font-mono); font-size:11.5px; color:var(--accent);
+  white-space:nowrap; font-variant-numeric:tabular-nums;
+}
+#help dd{margin:0; font-size:12px; color:var(--ink-dim); line-height:1.45}
+#help .foot{margin:18px 0 0; font-size:10.5px; color:var(--ink-mute); text-align:right}
+@media (prefers-reduced-motion:reduce){*{transition-duration:.01ms!important}}
+@media (max-width:820px){
+  #inspect{width:100%; max-width:none; height:46%; top:auto; bottom:0; border-left:0; border-top:1px solid var(--line)}
+  #timeline{right:0; bottom:46%}
+  #controls{display:none}
+}
+</style>
+
+<div id="stage"></div>
+
+<div class="chrome" id="hud">
+  <h1>Commit Strata <span class="repo" id="repo-name"></span></h1>
+  <div class="facts">
+    <span><b id="f-commits">–</b> commits</span>
+    <span><b id="f-files">–</b> files</span>
+    <span><b id="f-events">–</b> changes</span>
+    <span id="f-span">–</span>
+    <span id="f-deps"></span>
+  </div>
+</div>
+
+<aside class="chrome" id="inspect">
+  <div class="head">
+    <p class="eyebrow" id="ins-eyebrow">File</p>
+    <p id="ins-path" class="empty">기둥이나 구슬 위에 커서를 올리세요</p>
+  </div>
+  <div id="ins-stats" hidden>
+    <div><div class="k" id="ins-k1">Changes</div><div class="v" id="ins-changes">–</div></div>
+    <div><div class="k" id="ins-k2">Lifespan</div><div class="v" id="ins-life">–</div></div>
+    <div><div class="k">Added</div><div class="v" id="ins-add">–</div></div>
+    <div><div class="k">Removed</div><div class="v" id="ins-del">–</div></div>
+  </div>
+  <div id="ins-list">
+    <div class="hint" id="ins-hint">
+      바닥 평면은 <b>구조</b>입니다 — 같은 커밋에서 함께 바뀐 파일끼리 서로 끌어당겨 배치했습니다.
+      위로 솟는 축은 <b>시간</b>이고, 구슬 하나가 커밋 하나에서의 변경입니다.
+      구슬 크기는 변경 줄 수, 색은 그 변경이 일어난 시점입니다.
+      <br><br>
+      한가운데 선 <b>커밋 그래프</b>가 줄기입니다. 지층과 같은 높이(시간)를 쓰고 — 커밋을 클릭하면 그 시점으로 이동하고,
+      그 커밋이 건드린 파일까지 선이 이어집니다.
+      <br><br>
+      <kbd>드래그</kbd> 회전 · <kbd>휠</kbd> 줌 · <kbd>Shift+드래그</kbd> 이동(회전 중심은 그대로)
+      <br><br>
+      키보드만으로도 전부 됩니다 — <kbd>?</kbd> 를 눌러 보세요.
+      <kbd>s</kbd> 는 지금 높이를 원판으로 자르고, <kbd>v</kbd> 는 두 번 눌러 구간을 고릅니다.
+    </div>
+  </div>
+</aside>
+
+<div class="chrome" id="timeline">
+  <div id="tl-meta">
+    <span id="tl-slice" hidden></span>
+    <span id="tl-sha"></span><span id="tl-date"></span><span id="tl-subj"></span>
+  </div>
+  <div id="tl-row">
+    <button class="play" id="play" aria-label="시간 재생">▶</button>
+    <input type="range" id="scrub" min="0" max="1" value="1" step="1" aria-label="커밋 타임라인">
+    <span id="tl-count"></span>
+  </div>
+</div>
+
+<div class="chrome" id="controls">
+  <div class="group">
+    <div class="seg" role="group" aria-label="높이 축">
+      <button data-axis="index" aria-pressed="true">커밋 순서</button>
+      <button data-axis="time" aria-pressed="false">실제 날짜</button>
+    </div>
+    <div class="seg" role="group" aria-label="색 기준">
+      <button data-color="age" aria-pressed="true">시점</button>
+      <button data-color="ext" aria-pressed="false">확장자</button>
+    </div>
+    <div class="seg" role="group" aria-label="구조 엣지">
+      <button data-toggle="links" aria-pressed="true">co-change</button>
+      <button data-toggle="labels" aria-pressed="true">이름표</button>
+      <button data-toggle="dag" aria-pressed="true">커밋 그래프</button>
+      <button data-toggle="deps" aria-pressed="true">코드 의존</button>
+    </div>
+  </div>
+  <div id="legend"><span id="legend-body"></span></div>
+</div>
+
+<div id="tip"></div>
+
+<div class="chrome" id="help" hidden>
+  <div class="card">
+    <p class="eyebrow">Keys</p>
+    <dl id="help-keys"></dl>
+    <p class="foot"><span id="help-built"></span> · 아무 키나 눌러 닫기</p>
+  </div>
+</div>
+
+<script id="payload" type="application/json">__DATA__</script>
+<script>
+(() => {
+"use strict";
+const DATA = JSON.parse(document.getElementById('payload').textContent);
+const {commits, files, events, links} = DATA;
+const deps = DATA.deps || [];
+const NC = commits.length, NF = files.length, NE = events.length;
+
+/* ── 팔레트 ───────────────────────────────────── */
+const RAMP = [[0x52,0x65,0xD6],[0x3F,0xBD,0xB4],[0xFF,0xC2,0x72]];
+const EXT_COLORS = {
+  html:0xE4744A, js:0xE8C15A, py:0x5FA8D3, css:0x8B7FD4, md:0x6E7A8C,
+  json:0xC77DBB, sh:0x7FB069, yml:0x7FB069, yaml:0x7FB069, txt:0x556074,
+  dart:0x4FB3A5, conf:0x556074, example:0x556074, sql:0xB08968
+};
+const extColor = e => EXT_COLORS[e] ?? 0x4A5468;
+function rampAt(t){                        // t: 0..1 -> [r,g,b] 0..1
+  const s = t <= .5 ? [RAMP[0],RAMP[1],t*2] : [RAMP[1],RAMP[2],(t-.5)*2];
+  const [a,b,k] = s;
+  return [0,1,2].map(i => (a[i] + (b[i]-a[i])*k) / 255);
+}
+
+/* 커밋 축이 차지할 폭 — 바닥 배치가 이걸 피해 도넛을 만든다 */
+const _NL = Math.max(1, DATA.lanes || 1);
+const _LANE_W = Math.min(9, 46 / _NL);
+const AXIS_HALF = (_NL - 1) / 2 * _LANE_W;
+
+/* ── 바닥 배치: co-change 인력 + 디렉터리 응집 + 반발 ── */
+const layout = (() => {
+  const rnd = (s => () => (s = s*16807 % 2147483647) / 2147483647)(20260901);
+  const px = new Float32Array(NF), py = new Float32Array(NF);
+  const dirs = [...new Set(files.map(f => f.dir))].sort();
+  const dirAngle = new Map(dirs.map((d,i) => [d, i / dirs.length * Math.PI*2]));
+  files.forEach((f,i) => {                 // 디렉터리별 초기 부채꼴
+    const a = dirAngle.get(f.dir) + (rnd()-.5) * .9;
+    const r = 26 + rnd() * 34;
+    px[i] = Math.cos(a)*r; py[i] = Math.sin(a)*r;
+  });
+  const dirCentroid = () => {
+    const m = new Map();
+    files.forEach((f,i) => {
+      const c = m.get(f.dir) ?? {x:0,y:0,n:0};
+      c.x += px[i]; c.y += py[i]; c.n++; m.set(f.dir, c);
+    });
+    m.forEach(c => {c.x /= c.n; c.y /= c.n;});
+    return m;
+  };
+  const maxW = Math.max(1, ...links.map(l => l.w));
+  for (let it = 0; it < 420; it++) {
+    const cool = 1 - it/420, fx = new Float32Array(NF), fy = new Float32Array(NF);
+    for (let i = 0; i < NF; i++) for (let j = i+1; j < NF; j++) {
+      let dx = px[i]-px[j], dy = py[i]-py[j];
+      let d2 = dx*dx + dy*dy || .01;
+      if (d2 > 9000) continue;
+      const f = 340 / d2, d = Math.sqrt(d2);
+      dx = dx/d*f; dy = dy/d*f;
+      fx[i] += dx; fy[i] += dy; fx[j] -= dx; fy[j] -= dy;
+    }
+    for (const l of links) {               // 함께 바뀐 파일끼리 당긴다
+      const k = .012 * (l.w / maxW) + .004;
+      const dx = (px[l.t]-px[l.s])*k, dy = (py[l.t]-py[l.s])*k;
+      fx[l.s] += dx; fy[l.s] += dy; fx[l.t] -= dx; fy[l.t] -= dy;
+    }
+    for (const d of deps) {                // 진짜 import/call 은 더 강하게
+      const k = .030;
+      const dx = (px[d.t]-px[d.s])*k, dy = (py[d.t]-py[d.s])*k;
+      fx[d.s] += dx; fy[d.s] += dy; fx[d.t] -= dx; fy[d.t] -= dy;
+    }
+    const cent = dirCentroid();
+    for (let i = 0; i < NF; i++) {         // 같은 폴더끼리 느슨하게 묶는다
+      const c = cent.get(files[i].dir);
+      fx[i] += (c.x - px[i]) * .022; fy[i] += (c.y - py[i]) * .022;
+      fx[i] -= px[i] * .0018; fy[i] -= py[i] * .0018;   // 중앙 수렴
+      px[i] += Math.max(-4, Math.min(4, fx[i])) * cool;
+      py[i] += Math.max(-4, Math.min(4, fy[i])) * cool;
+    }
+  }
+  // 반경을 [R_IN, R_OUT] 로 재매핑: 각도(=구조 관계)는 지키고 중앙만 비운다
+  let R = 1;
+  for (let i = 0; i < NF; i++) R = Math.max(R, Math.hypot(px[i], py[i]));
+  const R_IN = Math.max(21, AXIS_HALF + 9), R_OUT = R_IN + 47;
+  for (let i = 0; i < NF; i++) {
+    const r = Math.hypot(px[i], py[i]) || 1e-6;
+    const k = (R_IN + (r / R) * (R_OUT - R_IN)) / r;
+    px[i] *= k; py[i] *= k;
+  }
+  return {px, py, R_IN, R_OUT};
+})();
+const {R_IN, R_OUT} = layout;
+
+/* ── 높이(시간) 매핑 ──────────────────────────── */
+const H = 96;
+const t0 = commits[0].t, t1 = commits[NC-1].t, tSpan = Math.max(1, t1 - t0);
+const yIndex = i => NC < 2 ? 0 : i / (NC-1) * H;
+const yTime  = i => (commits[i].t - t0) / tSpan * H;
+let axisMode = 'index', colorMode = 'age';
+const yOf = i => axisMode === 'index' ? yIndex(i) : yTime(i);
+
+/* ── three.js ─────────────────────────────────── */
+const stage = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:false});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+stage.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0D121B);
+scene.fog = new THREE.Fog(0x0D121B, 300, 720);
+const camera = new THREE.PerspectiveCamera(42, 1, 1, 1400);
+const root = new THREE.Group();
+root.position.y = -H/2;
+scene.add(root);
+
+/* 바닥 그리드 */
+{
+  const g = [], R = R_OUT + 10, RINGS = 4, SPOKES = 24, R0 = R_IN - 3;
+  for (let r = 0; r <= RINGS; r++) {
+    const rad = R0 + (R - R0) * r / RINGS;
+    for (let s = 0; s < 96; s++) {
+      const a0 = s/96*Math.PI*2, a1 = (s+1)/96*Math.PI*2;
+      g.push(Math.cos(a0)*rad, 0, Math.sin(a0)*rad, Math.cos(a1)*rad, 0, Math.sin(a1)*rad);
+    }
+  }
+  for (let s = 0; s < SPOKES; s++) {
+    const a = s/SPOKES*Math.PI*2;
+    g.push(Math.cos(a)*R0, 0, Math.sin(a)*R0, Math.cos(a)*R, 0, Math.sin(a)*R);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(g, 3));
+  root.add(new THREE.LineSegments(geo,
+    new THREE.LineBasicMaterial({color:0x2A3448, transparent:true, opacity:.85})));
+}
+
+/* 시간 눈금 — 실제 달이 바뀌는 지점 */
+const ticks = (() => {
+  const marks = [];
+  let prev = '';
+  commits.forEach((c,i) => {
+    const d = new Date(c.t*1000), key = d.getFullYear()+'-'+d.getMonth();
+    if (key !== prev) {marks.push({i, label:(d.getMonth()+1)+'월 '+String(d.getFullYear()).slice(2)}); prev = key;}
+  });
+  const geo = new THREE.BufferGeometry();
+  const mat = new THREE.LineBasicMaterial({color:0x36425A, transparent:true, opacity:.75});
+  const seg = new THREE.LineSegments(geo, mat);
+  root.add(seg);
+  const sprites = marks.map(m => {
+    const s = makeLabel(m.label, 'rgba(139,150,172,.95)', 12);
+    s.position.set(84, 0, 0); root.add(s); return s;
+  });
+  const rebuild = () => {
+    const a = [];
+    marks.forEach(m => {
+      const y = yOf(m.i);
+      for (const rad of [R_IN - 3, R_OUT + 10]) for (let s = 0; s < 96; s++) {
+        const a0 = s/96*Math.PI*2, a1 = (s+1)/96*Math.PI*2;
+        a.push(Math.cos(a0)*rad, y, Math.sin(a0)*rad, Math.cos(a1)*rad, y, Math.sin(a1)*rad);
+      }
+    });
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(a, 3));
+    geo.attributes.position.needsUpdate = true;
+    marks.forEach((m,k) => sprites[k].position.y = yOf(m.i));
+  };
+  return {rebuild, sprites};
+})();
+
+/* co-change 엣지 (바닥) */
+const linkMesh = (() => {
+  const pos = [], col = [], maxW = Math.max(1, ...links.map(l => l.w));
+  for (const l of links) {
+    const a = l.w / maxW * .5 + .08;
+    pos.push(layout.px[l.s], 0, layout.py[l.s], layout.px[l.t], 0, layout.py[l.t]);
+    for (let k = 0; k < 2; k++) col.push(.30*a+.10, .46*a+.12, .70*a+.16);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  const m = new THREE.LineSegments(geo,
+    new THREE.LineBasicMaterial({vertexColors:true, transparent:true, opacity:.85}));
+  root.add(m); return m;
+})();
+
+/* 코드 의존 — graphify 의 심볼 엣지를 파일 단위로 접은 것.
+   co-change 는 '함께 바뀐 이력'이고 이건 '실제로 부르는 관계'라, 바닥이 아니라
+   낮은 아치로 띄워 둘을 섞어 읽지 않게 한다. */
+const DEP_COLORS = {imports:0x5FA8D3, imports_from:0x5FA8D3, calls:0xE8C15A,
+                    indirect_call:0xE8C15A, uses:0x7FB069, inherits:0xC77DBB,
+                    references:0x8B7FD4};
+const depMesh = (() => {
+  const pos = [], col = [], SEG = 12;
+  for (const d of deps) {
+    const x0 = layout.px[d.s], z0 = layout.py[d.s];
+    const x1 = layout.px[d.t], z1 = layout.py[d.t];
+    const span = Math.hypot(x1-x0, z1-z0), lift = Math.min(26, span * .30);
+    const h = DEP_COLORS[d.k] ?? 0x8B96AC;
+    const c = [(h>>16&255)/255, (h>>8&255)/255, (h&255)/255];
+    let prev = null;
+    for (let i = 0; i <= SEG; i++) {
+      const t = i/SEG;
+      const pt = [x0 + (x1-x0)*t, Math.sin(t*Math.PI) * lift, z0 + (z1-z0)*t];
+      if (prev) {
+        pos.push(...prev, ...pt);
+        for (let n = 0; n < 2; n++) col.push(c[0], c[1], c[2]);
+      }
+      prev = pt;
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos.length ? pos : new Float32Array(6), 3));
+  geo.setAttribute('color',    new THREE.Float32BufferAttribute(col.length ? col : new Float32Array(6), 3));
+  const m = new THREE.LineSegments(geo,
+    new THREE.LineBasicMaterial({vertexColors:true, transparent:true, opacity:.88}));
+  root.add(m); return m;
+})();
+
+/* 파일 기둥 — first..last 구간 */
+const pillars = (() => {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(NF*6), 3));
+  geo.setAttribute('color',    new THREE.Float32BufferAttribute(new Float32Array(NF*6), 3));
+  const m = new THREE.LineSegments(geo,
+    new THREE.LineBasicMaterial({vertexColors:true, transparent:true, opacity:.82}));
+  root.add(m); return m;
+})();
+/* 바닥 앵커 점 */
+const anchors = (() => {
+  const pos = new Float32Array(NF*3);
+  files.forEach((f,i) => {pos[i*3] = layout.px[i]; pos[i*3+2] = layout.py[i];});
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const m = new THREE.Points(geo, new THREE.PointsMaterial({
+    color:0x54617D, size:2.6, sizeAttenuation:false, transparent:true, opacity:.75}));
+  root.add(m); return m;
+})();
+
+/* 변경 구슬 */
+const beads = (() => {
+  const pos = new Float32Array(NE*3), size = new Float32Array(NE),
+        col = new Float32Array(NE*3), ci = new Float32Array(NE);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('size',     new THREE.BufferAttribute(size, 1));
+  geo.setAttribute('acolor',   new THREE.BufferAttribute(col, 3));
+  geo.setAttribute('ci',       new THREE.BufferAttribute(ci, 1));
+  const mat = new THREE.ShaderMaterial({
+    uniforms:{uNow:{value:NC-1}, uPix:{value:600}, uHover:{value:-1},
+              uLo:{value:-1e9}, uHi:{value:1e9}},
+    vertexShader:`
+      attribute float size; attribute vec3 acolor; attribute float ci;
+      uniform float uNow; uniform float uPix; uniform float uHover;
+      uniform float uLo; uniform float uHi;
+      varying vec3 vColor; varying float vA;
+      void main(){
+        float sliced = uLo > -1e8 ? 1.0 : 0.0;
+        float vis = mix(step(ci, uNow + 0.5), 1.0, sliced);
+        float inR = step(uLo - 0.5, ci) * step(ci, uHi + 0.5);
+        float age = clamp((uNow - ci) / 24.0, 0.0, 1.0);
+        vA = vis * mix(1.0, 0.74, age) * mix(1.0, mix(0.05, 1.0, inR), sliced);
+        float hl = ci == uHover ? 1.7 : 1.0;
+        vColor = acolor * (ci == uHover ? 1.5 : 1.0);
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = clamp(size * hl * uPix / max(-mv.z, 1.0), 1.5, 62.0) * vis;
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader:`
+      varying vec3 vColor; varying float vA;
+      void main(){
+        float d = length(gl_PointCoord - 0.5);
+        if (d > 0.5 || vA < 0.02) discard;
+        float core = smoothstep(0.5, 0.16, d);
+        float halo = smoothstep(0.5, 0.30, d) * 0.55;
+        gl_FragColor = vec4(vColor, min(1.0, core * 1.05 + halo * 1.15) * vA);
+      }`,
+    transparent:true, depthWrite:false
+  });
+  const m = new THREE.Points(geo, mat);
+  root.add(m); return m;
+})();
+
+/* 이름표 — 변경이 많은 상위 파일 */
+function makeLabel(text, color, px){
+  const cv = document.createElement('canvas'), ctx = cv.getContext('2d');
+  const font = `500 ${px*2}px 'IBM Plex Mono',monospace`;
+  ctx.font = font;
+  cv.width = Math.ceil(ctx.measureText(text).width) + 16; cv.height = px*2 + 12;
+  const c2 = cv.getContext('2d');
+  c2.font = font; c2.fillStyle = color; c2.textBaseline = 'middle';
+  c2.fillText(text, 8, cv.height/2);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.minFilter = THREE.LinearFilter;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({map:tex, transparent:true, depthWrite:false}));
+  s.scale.set(cv.width/2 * .085, cv.height/2 * .085, 1);
+  s.center.set(0, .5);
+  return s;
+}
+const labels = files
+  .map((f,i) => ({f, i}))
+  .sort((a,b) => b.f.changes - a.f.changes)
+  .slice(0, 11)
+  .map(({f,i}) => {
+    const s = makeLabel(f.path.split('/').pop(), 'rgba(216,224,238,.95)', 13);
+    s.userData.fi = i;
+    root.add(s); return s;
+  });
+
+/* ── 커밋 그래프 (씬 왼쪽, 항상 정면을 보는 빌보드) ─────────
+   지층이 '무엇이 바뀌었나'라면 이쪽은 '어느 줄기에서 바뀌었나'다.
+   지층과 높이(=시간)를 공유하므로 같은 층끼리 나란히 읽힌다. */
+const NL = Math.max(1, DATA.lanes || 1);
+const LANE_W = _LANE_W, PANEL_D = 0;
+const LANE_COLORS = [0xC3CEE8, 0x6FBF8B, 0xD9705F, 0xC77DBB, 0xE8C15A, 0x4FB3A5];
+const laneColor = l => LANE_COLORS[l % LANE_COLORS.length];
+const laneX = l => (l - (NL-1)/2) * LANE_W;
+const panel = new THREE.Group();
+root.add(panel);
+
+/* 커밋별 변경 규모 */
+const commitBulk = new Float32Array(NC);
+for (const e of events) commitBulk[e.c] += e.a + e.d;
+
+/* 부모→자식 선. 레인이 바뀌면 한 번 꺾는다. */
+const dagLines = (() => {
+  const geo = new THREE.BufferGeometry();
+  const m = new THREE.LineSegments(geo,
+    new THREE.LineBasicMaterial({vertexColors:true, transparent:true, opacity:1.0}));
+  panel.add(m); return m;
+})();
+
+/* 커밋 노드 — 현재 시점 이후는 흐리게(지도 역할이라 전체를 남긴다) */
+const dagNodes = (() => {
+  const pos = new Float32Array(NC*3), size = new Float32Array(NC),
+        col = new Float32Array(NC*3), ci = new Float32Array(NC);
+  commits.forEach((c,i) => {
+    const h = laneColor(c.lane);
+    col[i*3] = (h>>16&255)/255; col[i*3+1] = (h>>8&255)/255; col[i*3+2] = (h&255)/255;
+    size[i] = (c.merge ? 2.6 : 1.15) + Math.sqrt(commitBulk[i]) * .085;
+    ci[i] = i;
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('size',     new THREE.BufferAttribute(size, 1));
+  geo.setAttribute('acolor',   new THREE.BufferAttribute(col, 3));
+  geo.setAttribute('ci',       new THREE.BufferAttribute(ci, 1));
+  const mat = new THREE.ShaderMaterial({
+    uniforms:{uNow:{value:NC-1}, uPix:{value:600}, uSel:{value:-1},
+              uLo:{value:-1e9}, uHi:{value:1e9}},
+    vertexShader:`
+      attribute float size; attribute vec3 acolor; attribute float ci;
+      uniform float uNow; uniform float uPix; uniform float uSel;
+      uniform float uLo; uniform float uHi;
+      varying vec3 vColor; varying float vA;
+      void main(){
+        float sliced = uLo > -1e8 ? 1.0 : 0.0;
+        float past = step(ci, uNow + 0.5);
+        float inR = step(uLo - 0.5, ci) * step(ci, uHi + 0.5);
+        vA = mix(mix(0.30, 1.0, past), mix(0.10, 1.0, inR), sliced);
+        float sel = ci == uSel ? 1.0 : 0.0;
+        vColor = mix(acolor, vec3(1.0, 0.70, 0.36), sel);
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = clamp(size * (1.0 + sel*0.9) * uPix / max(-mv.z, 1.0), 2.0, 46.0);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader:`
+      varying vec3 vColor; varying float vA;
+      void main(){
+        float d = length(gl_PointCoord - 0.5);
+        if (d > 0.5) discard;
+        gl_FragColor = vec4(vColor, smoothstep(0.5, 0.18, d) * vA);
+      }`,
+    transparent:true, depthWrite:false
+  });
+  const m = new THREE.Points(geo, mat);
+  panel.add(m); return m;
+})();
+
+/* 브랜치·태그 이름표 */
+const refSprites = commits.flatMap((c,i) => c.refs.map(r => {
+  const s = makeLabel(r, 'rgba(147,163,201,.95)', 11);
+  s.userData.ci = i; panel.add(s); return s;
+}));
+
+/* 현재 시점 마커 */
+const nowMark = (() => {
+  const w = Math.max(16, NL*LANE_W + 12);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(
+    [-w/2,0,0, w/2,0,0], 3));
+  const m = new THREE.Line(geo,
+    new THREE.LineBasicMaterial({color:0xFFB35C, transparent:true, opacity:.75}));
+  panel.add(m); return m;
+})();
+
+/* 선택한 커밋 ↔ 그 커밋에서 바뀐 파일 구슬 (두 그림을 잇는 다리) */
+const bridge = (() => {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(6), 3));
+  const m = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+    color:0xFFC272, transparent:true, opacity:.52}));
+  m.frustumCulled = false;
+  root.add(m); return m;
+})();
+let selCommit = -1;
+
+function rebuildDag(){
+  const pos = dagNodes.geometry.attributes.position.array;
+  commits.forEach((c,i) => {
+    pos[i*3] = laneX(c.lane); pos[i*3+1] = yOf(i); pos[i*3+2] = 0;
+  });
+  dagNodes.geometry.attributes.position.needsUpdate = true;
+  dagNodes.geometry.computeBoundingSphere();
+
+  const seg = [], col = [];
+  commits.forEach((c,i) => {
+    const x1 = laneX(c.lane), y1 = yOf(i);
+    c.p.forEach((pi, k) => {
+      const x0 = laneX(commits[pi].lane), y0 = yOf(pi);
+      const h = laneColor(k === 0 ? c.lane : commits[pi].lane);
+      const rgb = [(h>>16&255)/255, (h>>8&255)/255, (h&255)/255];
+      const push = (ax,ay,bx,by) => {
+        seg.push(ax,ay,0, bx,by,0);
+        for (let n = 0; n < 2; n++) col.push(rgb[0], rgb[1], rgb[2]);
+      };
+      if (x0 === x1) push(x0,y0,x1,y1);
+      else {                                  // 레인 이동은 한 번만 꺾는다
+        const ym = y0 + (y1-y0) * .62;
+        push(x0,y0,x0,ym); push(x0,ym,x1,y1);
+      }
+    });
+  });
+  const g = dagLines.geometry;
+  g.setAttribute('position', new THREE.Float32BufferAttribute(seg, 3));
+  g.setAttribute('color',    new THREE.Float32BufferAttribute(col, 3));
+  refSprites.forEach(s => {
+    const i = s.userData.ci;
+    s.position.set(laneX(commits[i].lane) + 2.6, yOf(i), 0);
+  });
+}
+
+/* 패널을 항상 카메라 왼쪽에 정면으로 세운다 */
+function placePanel(){
+  panel.position.set(-Math.sin(cam.theta)*PANEL_D, 0, Math.cos(cam.theta)*PANEL_D);
+  panel.rotation.y = Math.PI/2 - cam.theta;
+  panel.updateMatrix();
+  if (selCommit >= 0) setSelCommit(selCommit);   // 다리 시작점을 따라 옮긴다
+}
+
+function setSelCommit(ci){
+  selCommit = ci;
+  dagNodes.material.uniforms.uSel.value = ci;
+  const seg = [];
+  if (ci >= 0) {
+    const o = new THREE.Vector3(laneX(commits[ci].lane), yOf(ci), 0);
+    panel.updateMatrixWorld();
+    const w = o.clone().applyMatrix4(panel.matrix);   // root 기준 좌표
+    for (const e of events) if (e.c === ci)
+      seg.push(w.x, w.y, w.z, layout.px[e.f], yOf(e.c), layout.py[e.f]);
+  }
+  const g = bridge.geometry;
+  g.setAttribute('position', new THREE.Float32BufferAttribute(
+    seg.length ? seg : new Float32Array(6), 3));
+  g.attributes.position.needsUpdate = true;
+}
+
+/* ── 슬라이스 — 원통을 특정 높이에서 잘라 본다 ─────────────
+   s: 지금 높이에 원판 하나(±두께)   v: 두 번 눌러 구간 지정 */
+let sliceMode = 'off';          // 'off' | 'plane' | 'band'
+let sliceBand = 6;              // plane 모드의 반두께(커밋 수)
+let bandA = -1, bandB = -1;     // band 모드의 두 끝
+let pendingBand = false;        // v 를 한 번 눌러 시작점만 찍은 상태
+
+/* 지금 보이는 구간 [lo, hi]. 슬라이스가 꺼져 있으면 [0, 현재시점] */
+function sliceRange(){
+  const now = scrub ? +scrub.value : NC - 1;
+  if (sliceMode === 'plane')
+    return [Math.max(0, now - sliceBand), Math.min(NC - 1, now + sliceBand)];
+  if (sliceMode === 'band' && bandA >= 0 && bandB >= 0)
+    return [Math.min(bandA, bandB), Math.max(bandA, bandB)];
+  return [0, now];
+}
+/* 시간축을 자르는 것이지 '아직 안 온 미래'를 보여주는 건 아니다 —
+   슬라이스가 켜지면 그 구간은 전부 보인다(그게 슬라이스의 목적). */
+function sliceOn(){ return sliceMode !== 'off'; }
+
+const slicePlanes = [0, 1].map(() => {
+  const g = new THREE.Group();
+  const disc = new THREE.Mesh(
+    new THREE.CircleGeometry(1, 84),
+    new THREE.MeshBasicMaterial({color:0xFFFFFF, transparent:true, opacity:.085,
+                                 side:THREE.DoubleSide, depthWrite:false}));
+  disc.rotation.x = -Math.PI / 2;
+  g.add(disc);
+  const pts = [];
+  for (let i = 0; i <= 84; i++) {
+    const a = i / 84 * Math.PI * 2;
+    pts.push(Math.cos(a), 0, Math.sin(a));
+  }
+  const rim = new THREE.BufferGeometry();
+  rim.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  g.add(new THREE.Line(rim, new THREE.LineBasicMaterial({
+    color:0xFFFFFF, transparent:true, opacity:.55})));
+  g.visible = false;
+  root.add(g);
+  return g;
+});
+
+function updateSlice(){
+  const badge = $('tl-slice');
+  if (!sliceOn()) {
+    slicePlanes.forEach(g => g.visible = false);
+    badge.hidden = true;
+  } else {
+    const [lo, hi] = sliceRange();
+    const R = (typeof R_OUT === 'number' ? R_OUT : 68) + 12;
+    [lo, hi].forEach((ci, i) => {
+      const g = slicePlanes[i];
+      g.visible = true;
+      g.position.y = yOf(ci);
+      g.scale.set(R, 1, R);
+      g.children[0].scale.set(1, 1, 1);
+    });
+    badge.hidden = false;
+    badge.textContent = sliceMode === 'plane'
+      ? `SLICE ${commits[lo].sha}…${commits[hi].sha}  ±${sliceBand}`
+      : (pendingBand ? `RANGE ${commits[bandA].sha} → …`
+                     : `RANGE ${commits[lo].sha}…${commits[hi].sha}  (${hi-lo+1} commits)`);
+  }
+  const [lo, hi] = sliceRange();
+  beads.material.uniforms.uLo.value = sliceOn() ? lo : -1e9;
+  beads.material.uniforms.uHi.value = sliceOn() ? hi :  1e9;
+  dagNodes.material.uniforms.uLo.value = beads.material.uniforms.uLo.value;
+  dagNodes.material.uniforms.uHi.value = beads.material.uniforms.uHi.value;
+  clipToNow();
+  if (sliceOn()) showRange(lo, hi);
+}
+
+/* ── 프레임 데이터 갱신 ───────────────────────── */
+function rebuild(){
+  const pp = pillars.geometry.attributes.position.array;
+  const pc = pillars.geometry.attributes.color.array;
+  files.forEach((f,i) => {
+    const x = layout.px[i], z = layout.py[i];
+    const y0 = yOf(f.first), y1 = yOf(f.last);
+    pp[i*6] = x; pp[i*6+1] = y0; pp[i*6+2] = z;
+    pp[i*6+3] = x; pp[i*6+4] = y1; pp[i*6+5] = z;
+    let c;
+    if (colorMode === 'ext') {
+      const h = extColor(f.ext);
+      c = [(h>>16&255)/255, (h>>8&255)/255, (h&255)/255].map(v => v*.80);
+    } else {
+      c = rampAt(NC < 2 ? 1 : f.last/(NC-1)).map(v => v*.85);
+    }
+    for (let k = 0; k < 2; k++) {pc[i*6+k*3] = c[0]; pc[i*6+k*3+1] = c[1]; pc[i*6+k*3+2] = c[2];}
+  });
+  pillars.geometry.attributes.position.needsUpdate = true;
+  pillars.geometry.attributes.color.needsUpdate = true;
+
+  const bp = beads.geometry.attributes.position.array;
+  const bs = beads.geometry.attributes.size.array;
+  const bc = beads.geometry.attributes.acolor.array;
+  const bi = beads.geometry.attributes.ci.array;
+  events.forEach((e,k) => {
+    bp[k*3] = layout.px[e.f]; bp[k*3+1] = yOf(e.c); bp[k*3+2] = layout.py[e.f];
+    bs[k] = 1.15 + Math.sqrt(e.a + e.d) * .40;
+    bi[k] = e.c;
+    let c;
+    if (colorMode === 'ext') {
+      const h = extColor(files[e.f].ext);
+      c = [(h>>16&255)/255, (h>>8&255)/255, (h&255)/255];
+    } else {
+      c = rampAt(NC < 2 ? 1 : e.c/(NC-1));
+    }
+    bc[k*3] = c[0]; bc[k*3+1] = c[1]; bc[k*3+2] = c[2];
+  });
+  for (const a of ['position','size','acolor','ci']) beads.geometry.attributes[a].needsUpdate = true;
+  beads.geometry.computeBoundingSphere();
+
+  ticks.rebuild();
+  rebuildDag();
+  clipToNow();
+}
+
+/* 시간 레이어(기둥·이름표)를 현재 시점까지만 자른다.
+   바닥의 앵커·co-change 는 '구조'라 시간과 무관하게 남긴다. */
+function clipToNow(){
+  const now = scrub ? +scrub.value : NC - 1;
+  const on = sliceOn();
+  const [lo, hi] = sliceRange();
+  const pp = pillars.geometry.attributes.position.array;
+  files.forEach((f,i) => {
+    let a, b;
+    if (on) {                                   // 구간과 겹치는 부분만 남긴다
+      a = Math.max(f.first, lo); b = Math.min(f.last, hi);
+      if (a > b) a = b = f.first;               // 이 구간에 없는 파일 → 길이 0
+    } else {
+      a = f.first;
+      b = f.first <= now ? Math.min(f.last, now) : f.first;
+    }
+    pp[i*6+1] = yOf(a); pp[i*6+4] = yOf(b);
+  });
+  pillars.geometry.attributes.position.needsUpdate = true;
+  labels.forEach(s => {
+    const i = s.userData.fi, f = files[i];
+    const shown = on ? (f.last >= lo && f.first <= hi) : f.first <= now;
+    s.visible = shown && labelsOn;
+    const top = on ? Math.min(f.last, hi) : Math.min(f.last, now);
+    s.position.set(layout.px[i], yOf(Math.max(top, f.first)) + 2.4, layout.py[i]);
+  });
+  dagNodes.material.uniforms.uNow.value = now;
+  nowMark.position.y = yOf(now);
+  refSprites.forEach(s => {
+    s.visible = labelsOn; s.material.opacity = s.userData.ci <= now ? 1 : .3;
+  });
+}
+let labelsOn = true;
+
+/* ── 카메라 컨트롤 (직접 구현 — 의존성 0) ─────── */
+const cam = {theta:-0.72, phi:1.14, dist:218, tx:0, ty:0, tz:0, ou:0, ov:0};
+function applyCam(){
+  const r = cam.dist, sp = Math.sin(cam.phi), cp = Math.cos(cam.phi);
+  const ct = Math.cos(cam.theta), st = Math.sin(cam.theta);
+  // 화면 오른쪽·위 단위벡터. 패닝 오프셋(ou,ov)을 여기에 실어 두면 회전할 때
+  // 오프셋도 함께 돌아, 회전 중심은 과녁(tx,ty,tz)에 그대로 남는다.
+  const rx = st, rz = -ct;                    // right = forward × up (three 카메라와 같은 방향)
+  const ux = -cp*ct, uy = sp, uz = -cp*st;   // up = right × forward
+  const lx = cam.tx + rx*cam.ou + ux*cam.ov;
+  const ly = cam.ty +            uy*cam.ov;
+  const lz = cam.tz + rz*cam.ou + uz*cam.ov;
+  camera.position.set(lx + r*sp*ct, ly + r*cp, lz + r*sp*st);
+  camera.lookAt(lx, ly, lz);
+  placePanel();
+}
+/* 패닝 오프셋을 과녁에 흡수한다 — 고른 노드가 없을 때는 예전처럼 과녁 자체가 따라 움직인다. */
+function absorbPan(){
+  if (!cam.ou && !cam.ov) return;
+  const sp = Math.sin(cam.phi), cp = Math.cos(cam.phi);
+  const ct = Math.cos(cam.theta), st = Math.sin(cam.theta);
+  cam.tx +=  st*cam.ou + (-cp*ct)*cam.ov;
+  cam.ty +=               sp*cam.ov;
+  cam.tz += -ct*cam.ou + (-cp*st)*cam.ov;
+  cam.ou = cam.ov = 0;
+}
+const hasPivot = () => selCommit >= 0 || pinned >= 0;
+/* 회전 중심을 고른 노드로 옮긴다(2026-09-02 사용자 요청). 거리·각도는 그대로 두고
+   과녁(tx,ty,tz)만 부드럽게 옮기므로, 이후의 드래그 회전·휠 줌이 그 노드를 축으로 돈다.
+   '0' 이 원점으로 되돌린다. */
+let orbitAnim = null;
+function orbitAround(x, y, z){
+  const from = {x:cam.tx, y:cam.ty, z:cam.tz, ou:cam.ou, ov:cam.ov}, t0 = performance.now(), dur = 320;
+  if (orbitAnim) cancelAnimationFrame(orbitAnim);
+  const step = now => {
+    const k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+    cam.tx = from.x + (x - from.x) * e; cam.ty = from.y + (y - from.y) * e; cam.tz = from.z + (z - from.z) * e;
+    cam.ou = from.ou * (1 - e); cam.ov = from.ov * (1 - e);
+    applyCam();
+    orbitAnim = k < 1 ? requestAnimationFrame(step) : null;
+  };
+  orbitAnim = requestAnimationFrame(step);
+}
+function commitWorldPos(ci){
+  panel.updateMatrixWorld();
+  return new THREE.Vector3(laneX(commits[ci].lane), yOf(ci), 0)
+    .applyMatrix4(panel.matrix).setY(yOf(ci) - H/2);
+}
+function fileWorldPos(fi, atCi = -1){
+  // atCi 가 있으면 그 구슬. 없으면 지금 시점(scrub) 이전의 가장 최근 구슬 — 그것도 없으면 바닥
+  const now = +scrub.value; let ci = atCi;
+  if (ci < 0) for (let k = 0; k < NE; k++) if (events[k].f === fi && events[k].c <= now && events[k].c > ci) ci = events[k].c;
+  return new THREE.Vector3(layout.px[fi], (ci >= 0 ? yOf(ci) : 0) - H/2, layout.py[fi]);
+}
+function orbitToSelection(){
+  if (selCommit >= 0) { const p = commitWorldPos(selCommit); orbitAround(p.x, p.y, p.z); return true; }
+  if (pinned >= 0) { const p = fileWorldPos(pinned, pinnedCi); orbitAround(p.x, p.y, p.z); return true; }
+  return false;
+}
+let dragMoved = 0, swallowClick = false;   // 블록 밖 — 아래 click 핸들러도 본다
+{
+  const el = renderer.domElement;
+  let drag = null;
+  // 드래그가 끝나면 브라우저가 click 을 한 번 더 낸다. 그 클릭이 손을 놓은 자리의 노드를
+  // 골라 버리면(이제는 회전 중심까지 옮긴다) 화면이 통째로 튄다(2026-09-02 사용자 지적).
+  // 몇 px 이상 움직인 드래그 뒤의 click 은 삼킨다.
+  // 태블릿·폰: 손가락 하나는 회전, 두 개는 핀치 줌 + 이동(휠도 Shift 도 터치에는 없다).
+  const pts = new Map();          // 지금 화면에 닿아 있는 포인터
+  let pinch = null;               // {d, cx, cy} 두 점 사이 거리와 중점
+  const twoPts = () => {
+    const [a, b] = [...pts.values()];
+    return {d: Math.hypot(a.x - b.x, a.y - b.y), cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2};
+  };
+  el.addEventListener('pointerdown', e => {
+    pts.set(e.pointerId, {x:e.clientX, y:e.clientY});
+    if (orbitAnim) {cancelAnimationFrame(orbitAnim); orbitAnim = null;}
+    if (pts.size === 2) {drag = null; pinch = twoPts(); return;}   // 두 번째 손가락 — 회전은 멈춘다
+    if (pts.size > 2) return;
+    dragMoved = 0; swallowClick = false;
+    drag = {x:e.clientX, y:e.clientY, pan:e.shiftKey || e.button === 2};
+    el.setPointerCapture(e.pointerId); el.classList.add('dragging');
+  });
+  el.addEventListener('pointermove', e => {
+    if (pts.has(e.pointerId)) pts.set(e.pointerId, {x:e.clientX, y:e.clientY});
+    if (pinch && pts.size >= 2) {
+      const now = twoPts();
+      if (pinch.d > 0 && now.d > 0) cam.dist = Math.max(48, Math.min(620, cam.dist * pinch.d / now.d));
+      const k = cam.dist * .0016;
+      cam.ou -= (now.cx - pinch.cx) * k; cam.ov += (now.cy - pinch.cy) * k;
+      if (!hasPivot()) absorbPan();
+      pinch = now; dragMoved += 99;        // 핀치 뒤에 따라오는 click 은 삼킨다
+      applyCam(); return;
+    }
+    if (!drag) {hover(e); return;}
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    drag.x = e.clientX; drag.y = e.clientY;
+    dragMoved += Math.abs(dx) + Math.abs(dy);
+    if (drag.pan) {
+      const k = cam.dist * .0016;
+      cam.ou -= dx * k; cam.ov += dy * k;   // 부호는 예전 패닝과 같은 손맛
+      if (!hasPivot()) absorbPan();   // 고른 노드가 없을 때만 과녁이 따라간다
+    } else {
+      cam.theta += dx * .006;
+      cam.phi = Math.max(.10, Math.min(Math.PI - .10, cam.phi - dy * .006));
+    }
+    applyCam();
+  });
+  const end = e => {
+    pts.delete(e.pointerId);
+    if (pts.size < 2) pinch = null;
+    if (pts.size > 0) return;                     // 아직 손가락이 남아 있으면 드래그를 안 끝낸다
+    swallowClick = dragMoved > 4; drag = null; el.classList.remove('dragging');
+  };
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+  el.addEventListener('contextmenu', e => e.preventDefault());
+  el.addEventListener('wheel', e => {
+    e.preventDefault();
+    if (orbitAnim) {cancelAnimationFrame(orbitAnim); orbitAnim = null;}
+    const d0 = cam.dist;
+    cam.dist = Math.max(48, Math.min(620, d0 * (1 + Math.sign(e.deltaY) * .12)));
+    // 커서 아래 지점이 제자리에 있도록 시선을 커서 쪽으로 민다(구글맵처럼, 2026-09-02 사용자 요청).
+    // 과녁 깊이 평면에서 커서가 가리키는 점은 거리에 비례하므로, 줄어든 만큼 오프셋으로 보탠다.
+    const ndx = e.clientX / innerWidth * 2 - 1, ndy = 1 - e.clientY / innerHeight * 2;
+    const th = Math.tan(camera.fov * Math.PI / 360);
+    cam.ou += ndx * th * camera.aspect * (d0 - cam.dist);
+    cam.ov += ndy * th * (d0 - cam.dist);
+    if (!hasPivot()) absorbPan();   // 고른 노드가 없으면 과녁이 커서 쪽으로 따라온다
+    applyCam();
+  }, {passive:false});
+}
+
+/* ── 피킹: 화면 투영 최근접 ───────────────────── */
+const tip = document.getElementById('tip');
+const V = new THREE.Vector3();
+let hoverFile = -1, pinned = -1;
+let hoverEventCi = -1, pinnedCi = -1;   // hover 가 잡은 구슬의 커밋 / 핀 할 때 그 구슬의 커밋
+function hover(e){
+  const w = innerWidth, h = innerHeight;
+  let best = -1, bestD = 20*20, bx = 0, by = 0;
+  const now = +scrub.value;
+  // 커밋 노드가 더 가까우면 그쪽을 잡는다
+  let cBest = -1, cD = 18*18, cx = 0, cy = 0;
+  if (panel.visible) {
+    panel.updateMatrixWorld();
+    for (let i = 0; i < NC; i++) {
+      V.set(laneX(commits[i].lane), yOf(i), 0)
+       .applyMatrix4(panel.matrix).setY(yOf(i) - H/2).project(camera);
+      if (V.z > 1) continue;
+      const sx = (V.x*.5+.5)*w, sy = (-V.y*.5+.5)*h;
+      const d = (sx-e.clientX)**2 + (sy-e.clientY)**2;
+      if (d < cD) {cD = d; cBest = i; cx = sx; cy = sy;}
+    }
+  }
+  if (cBest >= 0) {
+    hoverCommit = cBest; hoverFile = -1;
+    tip.textContent = commits[cBest].sha + '  ' + fmtD(commits[cBest].t);
+    tip.style.left = (cx + 14) + 'px'; tip.style.top = (cy - 10) + 'px';
+    tip.classList.add('on');
+    if (pinned < 0) showCommit(cBest);
+    return;
+  }
+  hoverCommit = -1;
+  for (let k = 0; k < NE; k++) {
+    if (events[k].c > now) continue;
+    V.set(layout.px[events[k].f], yOf(events[k].c) - H/2, layout.py[events[k].f]).project(camera);
+    if (V.z > 1) continue;
+    const sx = (V.x*.5+.5)*w, sy = (-V.y*.5+.5)*h;
+    const d = (sx-e.clientX)**2 + (sy-e.clientY)**2;
+    if (d < bestD) {bestD = d; best = events[k].f; bx = sx; by = sy; hoverEventCi = events[k].c;}
+  }
+  if (best < 0) hoverEventCi = -1;
+  if (best !== hoverFile) {hoverFile = best; if (pinned < 0) showFile(best);}
+  if (best >= 0) {
+    tip.textContent = files[best].path;
+    tip.style.left = (bx + 14) + 'px'; tip.style.top = (by - 10) + 'px';
+    tip.classList.add('on');
+  } else tip.classList.remove('on');
+}
+let hoverCommit = -1;
+renderer.domElement.addEventListener('click', () => {
+  if (swallowClick) { swallowClick = false; return; }   // 방금 끝난 드래그의 잔여 클릭
+  if (hoverCommit >= 0) {
+    scrub.value = hoverCommit; onScrub();
+    setSelCommit(selCommit === hoverCommit ? -1 : hoverCommit);
+    showCommit(hoverCommit);
+    if (selCommit >= 0) orbitToSelection();   // 고른 커밋이 회전 중심
+    return;
+  }
+  setSelCommit(-1);
+  pinned = hoverFile >= 0 ? (pinned === hoverFile ? -1 : hoverFile) : -1;
+  // 같은 기둥의 어느 구슬을 눌렀는지도 기억한다 — 안 그러면 회전 중심이 늘 그 파일의
+  // 가장 최근 구슬로 가서, 옛 구슬을 골라도 꼭대기로 튀어 보인다(2026-09-02 사용자 지적).
+  pinnedCi = pinned >= 0 ? hoverEventCi : -1;
+  showFile(pinned >= 0 ? pinned : hoverFile);
+  if (pinned >= 0) orbitToSelection();        // 핀 한 파일이 회전 중심
+});
+
+/* ── 인스펙터 ─────────────────────────────────── */
+const $ = id => document.getElementById(id);
+const fmtD = t => new Date(t*1000).toISOString().slice(0,10);
+function showFile(fi){
+  const path = $('ins-path'), stats = $('ins-stats'), list = $('ins-list');
+  if (fi < 0) {
+    path.textContent = '기둥·구슬·커밋 위에 커서를 올리세요';
+    path.classList.add('empty'); stats.hidden = true;
+    $('ins-eyebrow').textContent = 'File';
+    list.innerHTML = ''; list.appendChild($('ins-hint') ?? hintNode);
+    return;
+  }
+  const f = files[fi];
+  $('ins-eyebrow').textContent = 'File';
+  $('ins-k1').textContent = 'Changes'; $('ins-k2').textContent = 'Lifespan';
+  path.textContent = f.path + (f.alive ? '' : '  (삭제됨)');
+  path.classList.remove('empty');
+  stats.hidden = false;
+  $('ins-changes').textContent = f.changes;
+  $('ins-add').innerHTML = '+' + f.add.toLocaleString();
+  $('ins-del').innerHTML = '−' + f.dele.toLocaleString();
+  const days = Math.round((commits[f.last].t - commits[f.first].t) / 86400);
+  $('ins-life').innerHTML = days + '<small> 일</small>';
+  const rows = events
+    .map((e,k) => ({e,k})).filter(o => o.e.f === fi)
+    .sort((a,b) => b.e.c - a.e.c)
+    .map(({e}) => {
+      const c = commits[e.c];
+      return `<div class="ev" data-ci="${e.c}">
+        <span class="sha">${c.sha}</span><span class="date">${fmtD(c.t)}</span>
+        <span class="subj">${esc(c.subject)}</span>
+        <span class="delta"><span class="a">+${e.a}</span> <span class="d">−${e.d}</span></span>
+      </div>`;
+    }).join('');
+  list.innerHTML = rows;
+  list.querySelectorAll('.ev').forEach(el => el.addEventListener('click', () => {
+    scrub.value = el.dataset.ci; onScrub();
+  }));
+}
+function showCommit(ci){
+  const c = commits[ci];
+  const path = $('ins-path'), stats = $('ins-stats'), list = $('ins-list');
+  $('ins-eyebrow').textContent = 'Commit';
+  path.classList.remove('empty');
+  path.innerHTML = `<span style="color:var(--accent)">${c.sha}</span> ${esc(c.subject)}` +
+    (c.refs.length ? `<br><span style="color:var(--ink-mute);font-size:11px">${
+      c.refs.map(esc).join(' · ')}</span>` : '');
+  stats.hidden = false;
+  const rows = events.filter(e => e.c === ci);
+  const add = rows.reduce((s,e) => s+e.a, 0), del = rows.reduce((s,e) => s+e.d, 0);
+  $('ins-changes').textContent = rows.length;
+  $('ins-life').innerHTML = fmtD(c.t).slice(5).replace('-','<small>/</small>');
+  $('ins-add').textContent = '+' + add.toLocaleString();
+  $('ins-del').textContent = '−' + del.toLocaleString();
+  $('ins-k1').textContent = 'Files touched';
+  $('ins-k2').textContent = 'Date';
+  list.innerHTML = rows.sort((a,b) => (b.a+b.d)-(a.a+a.d)).map(e =>
+    `<div class="ev" data-fi="${e.f}">
+       <span class="sha" style="grid-column:1/-1;color:var(--ink)">${esc(files[e.f].path)}</span>
+       <span class="delta" style="grid-column:1/-1"><span class="a">+${e.a}</span> <span class="d">−${e.d}</span></span>
+     </div>`).join('') || '<div class="hint">이 커밋은 파일을 바꾸지 않았습니다 (머지 커밋).</div>';
+  list.querySelectorAll('.ev').forEach(el => el.addEventListener('click', ev => {
+    ev.stopPropagation(); pinned = +el.dataset.fi; showFile(pinned); orbitToSelection();
+  }));
+}
+function showRange(lo, hi){
+  if (pinned >= 0) return;                 // 파일을 핀 해 두었으면 건드리지 않는다
+  const rows = events.filter(e => e.c >= lo && e.c <= hi);
+  const per = new Map();
+  for (const e of rows) {
+    const o = per.get(e.f) ?? {a:0, d:0, n:0};
+    o.a += e.a; o.d += e.d; o.n++; per.set(e.f, o);
+  }
+  $('ins-eyebrow').textContent = 'Range';
+  const path = $('ins-path');
+  path.classList.remove('empty');
+  path.innerHTML = `<span style="color:var(--accent)">${commits[lo].sha}</span>` +
+    ` … <span style="color:var(--accent)">${commits[hi].sha}</span>` +
+    `<br><span style="color:var(--ink-mute);font-size:11px">` +
+    `${fmtD(commits[lo].t)} → ${fmtD(commits[hi].t)}</span>`;
+  $('ins-stats').hidden = false;
+  $('ins-k1').textContent = 'Commits'; $('ins-k2').textContent = 'Files';
+  $('ins-changes').textContent = hi - lo + 1;
+  $('ins-life').textContent = per.size;
+  $('ins-add').textContent = '+' + rows.reduce((s,e) => s+e.a, 0).toLocaleString();
+  $('ins-del').textContent = '−' + rows.reduce((s,e) => s+e.d, 0).toLocaleString();
+  const list = $('ins-list');
+  list.innerHTML = [...per.entries()].sort((x,y) => (y[1].a+y[1].d)-(x[1].a+x[1].d))
+    .map(([fi,o]) => `<div class="ev" data-fi="${fi}">
+        <span class="sha" style="grid-column:1/-1;color:var(--ink)">${esc(files[fi].path)}</span>
+        <span class="delta" style="grid-column:1/-1"><span class="a">+${o.a}</span> <span class="d">−${o.d}</span> <span style="color:var(--ink-mute)">· ${o.n}회</span></span>
+      </div>`).join('') || '<div class="hint">이 구간에는 변경이 없습니다.</div>';
+  list.querySelectorAll('.ev').forEach(el => el.addEventListener('click', ev => {
+    ev.stopPropagation(); pinned = +el.dataset.fi; showFile(pinned); orbitToSelection();
+  }));
+}
+const hintNode = $('ins-hint');
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ── 타임라인 ─────────────────────────────────── */
+const scrub = $('scrub');
+scrub.max = NC - 1; scrub.value = NC - 1;
+function onScrub(){
+  const i = +scrub.value, c = commits[i];
+  beads.material.uniforms.uNow.value = i;
+  if (sliceMode === 'plane') updateSlice(); else clipToNow();
+  $('tl-sha').textContent = c.sha;
+  $('tl-date').textContent = fmtD(c.t);
+  $('tl-subj').textContent = c.subject;
+  $('tl-count').textContent = (i+1) + ' / ' + NC;
+  if (pendingBand) { bandB = i; updateSlice(); }
+  scrub.style.setProperty('--fill', ((i/(NC-1))*100) + '%');
+}
+scrub.addEventListener('input', () => {stopPlay(); onScrub();});
+
+let playing = 0;
+const playBtn = $('play');
+function stopPlay(){if (playing) {clearInterval(playing); playing = 0; playBtn.textContent = '▶';}}
+playBtn.addEventListener('click', () => {
+  if (playing) return stopPlay();
+  if (+scrub.value >= NC-1) scrub.value = 0;
+  playBtn.textContent = '❚❚';
+  playing = setInterval(() => {
+    if (+scrub.value >= NC-1) return stopPlay();
+    scrub.value = +scrub.value + 1; onScrub();
+  }, 110);
+});
+/* 키 정의는 한 곳에만 둔다 — 도움말도 이 배열에서 그린다 */
+const KEYS = [
+  ['h  l',     '좌우 회전 (H L 은 빠르게)'],
+  ['← → ↑ ↓',  '이동 (Shift 는 크게)'],
+  ['Enter',    '지금 시점의 커밋을 고른다 — 회전 중심'],
+  ['Tab',      '고른 커밋이 건드린 파일을 차례로 핀 (Shift+Tab 역순)'],
+  ['u  d',     '시점 올리기 / 내리기'],
+  ['+  -',     '줌 (= 와 _ 도 됩니다)'],
+  ['j  k',     '시간 한 커밋씩 (J K 는 10개씩)'],
+  ['gg  G',    '첫 커밋 / 마지막 커밋'],
+  ['s',        '슬라이스 원판 — 지금 높이 ±두께만 남긴다'],
+  ['v',        '구간 선택 — 한 번 눌러 시작, 옮긴 뒤 다시 눌러 끝'],
+  ['[  ]',     '원판 두께 ∓'],
+  ['Esc',      '슬라이스·선택 해제'],
+  ['Space',    '시간 재생 / 정지'],
+  ['1 2 3 4',  'co-change · 이름표 · 커밋 그래프 · 코드 의존'],
+  ['5',        '색 기준 (시점 / 확장자)'],
+  ['t',        '높이 축 (커밋 순서 / 실제 날짜)'],
+  ['0',        '카메라 초기화'],
+  ['f',        '고른 노드를 회전 중심으로'],
+  ['?',        '이 도움말'],
+];
+$('help-keys').innerHTML = KEYS.map(([k,v]) =>
+  `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
+$('help-built').textContent = DATA.built
+  ? '생성 ' + new Date(DATA.built * 1000).toISOString().slice(0,16).replace('T',' ')
+  : '';
+
+const TOGGLES = ['links', 'labels', 'dag', 'deps'];
+const clickToggle = n => document.querySelector(`[data-toggle="${n}"]`)?.click();
+let pendingG = 0;
+
+function stepTime(d){
+  stopPlay();
+  scrub.value = Math.max(0, Math.min(NC - 1, +scrub.value + d));
+  onScrub();
+}
+
+addEventListener('keydown', e => {
+  const t = e.target;
+  const typing = t && (t.isContentEditable || t.tagName === 'TEXTAREA' ||
+    t.tagName === 'SELECT' ||
+    (t.tagName === 'INPUT' &&
+     !['range','checkbox','radio','button','submit'].includes(t.type)));
+  if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+  const help = $('help');
+  if (!help.hidden) { help.hidden = true; e.preventDefault(); return; }
+  const k = e.key;
+  const rot = e.shiftKey ? .22 : .07, step = e.shiftKey ? 10 : 1;
+  let used = true;
+
+  switch (k) {
+    case 'h': case 'H': cam.theta -= rot; applyCam(); break;
+    case 'l': case 'L': cam.theta += rot; applyCam(); break;
+    case 'u': cam.phi = Math.max(.10, cam.phi - .07); applyCam(); break;
+    case 'd': cam.phi = Math.min(Math.PI - .10, cam.phi + .07); applyCam(); break;
+    case '+': case '=': cam.dist = Math.max(48, cam.dist * .88); applyCam(); break;
+    case '-': case '_': cam.dist = Math.min(900, cam.dist * 1.14); applyCam(); break;
+    case 'j': case 'J': stepTime(-step); break;
+    case 'k': case 'K': stepTime(+step); break;
+    case 'G': stepTime(NC); break;
+    case 'g':
+      if (pendingG) { pendingG = 0; stepTime(-NC); }
+      else { pendingG = 1; setTimeout(() => pendingG = 0, 600); }
+      break;
+    case 's':
+      sliceMode = sliceMode === 'plane' ? 'off' : 'plane';
+      pendingBand = false; updateSlice();
+      if (!sliceOn()) showFile(pinned >= 0 ? pinned : -1);
+      break;
+    case 'v':
+      if (!pendingBand) {
+        bandA = +scrub.value; bandB = bandA;
+        pendingBand = true; sliceMode = 'band';
+      } else {
+        bandB = +scrub.value; pendingBand = false;
+      }
+      updateSlice();
+      break;
+    case '[': sliceBand = Math.max(0, sliceBand - 1); if (sliceOn()) updateSlice(); break;
+    case ']': sliceBand = Math.min(NC, sliceBand + 1); if (sliceOn()) updateSlice(); break;
+    case 'Escape':
+      sliceMode = 'off'; pendingBand = false; bandA = bandB = -1;
+      setSelCommit(-1); pinned = -1;
+      updateSlice(); showFile(-1);
+      break;
+    case ' ': playBtn.click(); break;
+    case '1': clickToggle('links'); break;
+    case '2': clickToggle('labels'); break;
+    case '3': clickToggle('dag'); break;
+    case '4': clickToggle('deps'); break;
+    case '5':
+      document.querySelector(`[data-color="${colorMode === 'age' ? 'ext' : 'age'}"]`).click();
+      break;
+    case 't':
+      document.querySelector(`[data-axis="${axisMode === 'index' ? 'time' : 'index'}"]`).click();
+      break;
+    case 'f': case 'F': orbitToSelection(); break;
+    // 이동(패닝) — Shift+드래그와 같은 규칙: 고른 노드가 있으면 회전 중심은 그대로 두고
+    // 화면만 민다. 카메라가 그쪽으로 간다(← 는 왼쪽을 본다). 키보드 전용 환경(TUI)을 위해 넣었다.
+    case 'ArrowLeft': case 'ArrowRight': case 'ArrowUp': case 'ArrowDown': {
+      const m = cam.dist * (e.shiftKey ? .12 : .04);
+      if (k === 'ArrowLeft') cam.ou -= m; else if (k === 'ArrowRight') cam.ou += m;
+      else if (k === 'ArrowUp') cam.ov += m; else cam.ov -= m;
+      if (!hasPivot()) absorbPan(); applyCam(); break; }
+    // Enter: 지금 시점(j/k 로 옮긴 scrub)의 커밋을 고른다/푼다 — 마우스 클릭과 같은 효과
+    case 'Enter': {
+      const ci = +scrub.value;
+      setSelCommit(selCommit === ci ? -1 : ci);
+      if (selCommit >= 0) { showCommit(ci); orbitToSelection(); } break; }
+    // Tab / Shift+Tab: 고른 커밋(없으면 지금 시점)이 건드린 파일을 차례로 핀 — 그 구슬이 회전 중심
+    case 'Tab': {
+      const ci = selCommit >= 0 ? selCommit : +scrub.value;
+      const fs = []; for (const ev of events) if (ev.c === ci) fs.push(ev.f);
+      if (!fs.length) break;
+      const i = fs.indexOf(pinned);
+      pinned = fs[(i + (e.shiftKey ? -1 : 1) + fs.length) % fs.length]; pinnedCi = ci;
+      showFile(pinned);
+      const p = fileWorldPos(pinned, ci); orbitAround(p.x, p.y, p.z); break; }
+    case '0': cam.theta = -0.72; cam.phi = 1.14; cam.tx = cam.ty = cam.tz = 0;
+              cam.ou = cam.ov = 0;
+              cam.dist = Math.max(232, R_OUT * 3.0); applyCam(); break;
+    case '?': help.hidden = false; break;
+    default: used = false;
+  }
+  if (used) e.preventDefault();
+});
+
+/* ── 컨트롤 ───────────────────────────────────── */
+document.querySelectorAll('[data-axis]').forEach(b => b.addEventListener('click', () => {
+  axisMode = b.dataset.axis;
+  document.querySelectorAll('[data-axis]').forEach(x =>
+    x.setAttribute('aria-pressed', String(x === b)));
+  rebuild();
+}));
+document.querySelectorAll('[data-color]').forEach(b => b.addEventListener('click', () => {
+  colorMode = b.dataset.color;
+  document.querySelectorAll('[data-color]').forEach(x =>
+    x.setAttribute('aria-pressed', String(x === b)));
+  rebuild(); drawLegend();
+}));
+document.querySelectorAll('[data-toggle]').forEach(b => b.addEventListener('click', () => {
+  const on = b.getAttribute('aria-pressed') !== 'true';
+  b.setAttribute('aria-pressed', String(on));
+  if (b.dataset.toggle === 'links') linkMesh.visible = on;
+  else if (b.dataset.toggle === 'dag') {panel.visible = on; bridge.visible = on;}
+  else if (b.dataset.toggle === 'deps') depMesh.visible = on;
+  else {labelsOn = on; refSprites.forEach(x => x.visible = on); clipToNow();}
+}));
+function drawLegend(){
+  const el = $('legend-body');
+  const depLegend = deps.length ? `<span class="ext" style="margin-left:18px">` +
+    [...new Set(deps.map(d => d.k))].sort().map(k =>
+      `<span><i style="background:#${(DEP_COLORS[k] ?? 0x8B96AC).toString(16).padStart(6,'0')}"></i>${k}</span>`
+).join('') + `</span>` : '';
+  if (colorMode === 'age')
+    el.innerHTML = `<span style="display:flex;align-items:center;gap:9px">
+      ${fmtD(t0)} <i class="ramp"></i> ${fmtD(t1)}</span>` + depLegend;
+  else {
+    const seen = [...new Set(files.map(f => f.ext))]
+      .filter(e => EXT_COLORS[e]).sort();
+    el.innerHTML = `<span class="ext">` + seen.map(e =>
+      `<span><i style="background:#${extColor(e).toString(16).padStart(6,'0')}"></i>${e}</span>`
+).join('') + `</span>` + depLegend;
+  }
+}
+
+/* ── 리사이즈 · 루프 ──────────────────────────── */
+function resize(){
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w/h; camera.updateProjectionMatrix();
+  beads.material.uniforms.uPix.value = h * .55;
+  dagNodes.material.uniforms.uPix.value = h * .55;
+}
+addEventListener('resize', resize);
+
+$('repo-name').textContent = DATA.repo;
+$('f-commits').textContent = NC;
+$('f-files').textContent = NF;
+$('f-events').textContent = NE;
+$('f-span').textContent = fmtD(t0) + ' → ' + fmtD(t1);
+if (DATA.graph) {
+  const g = DATA.graph, stale = g.built_at_commit !== commits[NC-1].sha;
+  $('f-deps').innerHTML = `<b>${deps.length}</b> code deps ` +
+    `<span style="color:${stale ? '#D9705F' : 'var(--ink-mute)'}">` +
+    `(graphify @${g.built_at_commit}${stale ? ' · 코드보다 뒤처짐' : ''})</span>`;
+}
+
+rebuild(); drawLegend(); onScrub(); showFile(-1); updateSlice(); applyCam(); resize();
+cam.dist = Math.max(232, R_OUT * 3.0); applyCam();
+// 헤드리스 검증용 손잡이(모듈 스코프라 밖에서 안 보인다) — 화면 동작과 무관
+window.__cs = {cam, applyCam, orbitAround, absorbPan, orbitToSelection, commitWorldPos, fileWorldPos, setSelCommit,
+  get hoverEventCi(){return hoverEventCi;}, get pinned(){return pinned;}, get pinnedCi(){return pinnedCi;}, get selCommit(){return selCommit;}, camera, events, yOf, H};
+(function loop(){requestAnimationFrame(loop); renderer.render(scene, camera);})();
+})();
+</script>
