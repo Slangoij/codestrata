@@ -1,3 +1,5 @@
+***한국어** · [English](README.en.md)*
+
 # codestrata
 
 깃 저장소를 **구조 × 시간**의 3D 지층으로 세워 보는 도구입니다. 바닥 평면은 파일들의 구조이고,
@@ -5,11 +7,6 @@
 
 어느 파일이 함께 바뀌어 왔는지, 어느 시기에 무엇이 들끓었는지, 지금 손대는 파일이 어떤 이웃을
 끌고 다니는지를 한 화면에서 봅니다. 브라우저에서도 보고, **터미널 안에서도** 봅니다.
-
-> **English** — `codestrata` turns a git repository into a 3D "strata" view: the ground plane is
-> file structure, the vertical axis is time, and each bead is one file's change in one commit.
-> It renders to a single dependency-free HTML file, and can also draw itself **inside your
-> terminal** using the kitty graphics protocol. Python standard library only.
 
 ---
 
