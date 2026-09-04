@@ -65,7 +65,7 @@ codestrata <저장소> --port 9000 --out ~/어딘가
 | 브라우저 보기 | WebGL 이 되는 브라우저. three.js 는 CDN 에서 받습니다 |
 | `codestrata-tui` | kitty 그래픽을 아는 터미널(kitty · Ghostty · WezTerm), `chromium`, tmux 안이면 `allow-passthrough on` |
 | `codestrata-cli` | 아무 터미널이나. 크로미움이 필요 없습니다 |
-| 선택 | [graphify](https://github.com/getzep/graphiti) 류의 코드 의존 그래프가 있으면 함께 그립니다. 없으면 co-change 만으로 그립니다 |
+| 선택 | 저장소 안에 `graphify-out/graph.json` 형태의 코드 의존 그래프가 있으면 함께 그립니다. 없으면 함께 바뀐 이력(co-change)만으로 그립니다 |
 
 리눅스에서 개발하고 확인했습니다(Ubuntu 24.04 · Python 3.12 · Ghostty + tmux 3.4).
 macOS 를 염두에 두고 GNU 전용 옵션은 피했지만 실제로 확인하지는 못했습니다. 윈도우는 대상이
