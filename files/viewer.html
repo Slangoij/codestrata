@@ -277,6 +277,7 @@ button.play:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
 </div>
 
 <div id="tip"></div>
+<div id="loading" style="position:fixed;inset:0;display:grid;place-items:center;color:#9aa4b2;font:14px/1.6 'IBM Plex Mono',ui-monospace,monospace;background:#0d1117;z-index:9">배치 계산 중… 파일이 많으면 몇 초 걸립니다</div>
 
 <div class="chrome" id="help" hidden>
   <div class="card">
@@ -288,7 +289,8 @@ button.play:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
 
 <script id="payload" type="application/json">__DATA__</script>
 <script>
-(() => {
+// 한 틱 늦게 시작한다 — 위의 '배치 계산 중' 안내가 먼저 그려지게(파서를 막는 스크립트는 그 전에 못 그린다)
+setTimeout(() => {
 "use strict";
 const DATA = JSON.parse(document.getElementById('payload').textContent);
 const {commits, files, events, links} = DATA;
@@ -337,13 +339,28 @@ const layout = (() => {
   const maxW = Math.max(1, ...links.map(l => l.w));
   for (let it = 0; it < 420; it++) {
     const cool = 1 - it/420, fx = new Float32Array(NF), fy = new Float32Array(NF);
-    for (let i = 0; i < NF; i++) for (let j = i+1; j < NF; j++) {
-      let dx = px[i]-px[j], dy = py[i]-py[j];
-      let d2 = dx*dx + dy*dy || .01;
-      if (d2 > 9000) continue;
-      const f = 340 / d2, d = Math.sqrt(d2);
-      dx = dx/d*f; dy = dy/d*f;
-      fx[i] += dx; fy[i] += dy; fx[j] -= dx; fy[j] -= dy;
+    // 반발력은 d2 ≤ 9000 인 쌍만 기여한다(위 컷오프). 격자 한 칸을 95(≥√9000)로 잡으면 그런 쌍은
+    // 반드시 이웃 9칸 안에 있으므로, 모든 쌍을 훑지 않고 이웃 칸만 본다. 기여하는 쌍의 집합은 같다.
+    // (오주여 프론트 521파일에서 배치 계산은 ~0.6s. 시작 지연의 주범은 아니지만 큰 저장소에서 확실히 준다.)
+    const CELL = 95, grid = new Map();
+    for (let i = 0; i < NF; i++) {
+      const key = ((px[i] / CELL) | 0) * 65536 + ((py[i] / CELL) | 0);
+      const b = grid.get(key); if (b) b.push(i); else grid.set(key, [i]);
+    }
+    for (let i = 0; i < NF; i++) {
+      const gx = (px[i] / CELL) | 0, gy = (py[i] / CELL) | 0;
+      for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) {
+        const b = grid.get((gx + ox) * 65536 + (gy + oy)); if (!b) continue;
+        for (const j of b) {
+          if (j <= i) continue;                       // 쌍은 한 번만
+          let dx = px[i]-px[j], dy = py[i]-py[j];
+          let d2 = dx*dx + dy*dy || .01;
+          if (d2 > 9000) continue;
+          const f = 340 / d2, d = Math.sqrt(d2);
+          dx = dx/d*f; dy = dy/d*f;
+          fx[i] += dx; fy[i] += dy; fx[j] -= dx; fy[j] -= dy;
+        }
+      }
     }
     for (const l of links) {               // 함께 바뀐 파일끼리 당긴다
       const k = .012 * (l.w / maxW) + .004;
@@ -1416,7 +1433,10 @@ rebuild(); drawLegend(); onScrub(); showFile(-1); updateSlice(); applyCam(); res
 cam.dist = Math.max(232, R_OUT * 3.0); applyCam();
 // 헤드리스 검증용 손잡이(모듈 스코프라 밖에서 안 보인다) — 화면 동작과 무관
 window.__cs = {cam, applyCam, orbitAround, absorbPan, orbitToSelection, commitWorldPos, fileWorldPos, setSelCommit,
-  get hoverEventCi(){return hoverEventCi;}, get pinned(){return pinned;}, get pinnedCi(){return pinnedCi;}, get selCommit(){return selCommit;}, camera, events, yOf, H};
+  get hoverEventCi(){return hoverEventCi;}, get pinned(){return pinned;}, get pinnedCi(){return pinnedCi;}, get selCommit(){return selCommit;},
+  get playing(){return !!playing;}, get scrub(){return [+scrub.value, NC - 1];},   // TUI 가 재생 진행을 보여 주는 데 쓴다
+  camera, events, yOf, H};
+document.getElementById('loading')?.remove();
 (function loop(){requestAnimationFrame(loop); renderer.render(scene, camera);})();
-})();
+}, 0);
 </script>

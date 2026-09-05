@@ -20,7 +20,7 @@ ssh 너머에서도 된다 — 그림은 이스케이프 시퀀스라 지금 앉
   (버튼을 누른 채 움직일 때만 이벤트가 오는 모드) — 클릭 직전에 그 자리로 hover 를 한 번 보낸다.
 - 셀의 픽셀 크기를 터미널이 알려 주지 않으면(일부 tmux 경로) 폭:높이 = 1:2 로 가정한다.
 """
-import base64, json, os, re, select, shutil, signal, socket, struct, subprocess, sys, termios, time, tty, unicodedata, urllib.request
+import base64, json, os, re, select, shutil, signal, socket, struct, subprocess, sys, termios, threading, time, tty, unicodedata, urllib.request
 
 OUT_DIR   = os.path.expanduser('~/debug-captures/codebase-3d')
 def work_dir():
@@ -32,6 +32,7 @@ def work_dir():
 THREE_URL = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js'
 THREE_TAG = f'<script src="{THREE_URL}"></script>'
 MAX_W     = int(os.environ.get('CODESTRATA_MAXW', 1920))   # 스크린샷 폭 상한 — 크면 프레임이 느려진다
+PLAY_SS   = float(os.environ.get('CODESTRATA_PLAY_SS', 0.6))  # 재생 중 밀도. 프레임 전송량이 절반으로 준다
 SS        = float(os.environ.get('CODESTRATA_SS', 1.0))    # 픽셀 밀도(deviceScaleFactor). 셀 크기를 못 구해
                                                            # 터미널이 확대하는 상황에서만 올린다(2 정도)
 LOG = open(os.environ['CODESTRATA_TUI_LOG'], 'a') if os.environ.get('CODESTRATA_TUI_LOG') else None
@@ -487,7 +488,25 @@ def main():
         proc, prof, cdp = launch(view, W, H)
         cdp.call('Page.enable')
         cdp.call('Emulation.setDeviceMetricsOverride', {'width': W, 'height': H, 'deviceScaleFactor': SS, 'mobile': False})
-        time.sleep(2.5)                                 # 뷰어 초기화(레이아웃 계산)
+        # 뷰어가 배치를 계산하는 동안(큰 저장소는 수 초) 페이지는 아무 응답도 못 한다. 그동안
+        # 화면이 멎어 보이지 않게, 준비 확인은 딴 스레드에 맡기고 여기서는 경과 시간을 돌린다.
+        ready = {}
+        def probe_ready():
+            t_end = time.time() + 120
+            while time.time() < t_end:
+                try:
+                    r = cdp.call('Runtime.evaluate', {'expression': '!!(window.__cs && __cs.events)', 'returnByValue': True})
+                    if r.get('result', {}).get('value'): ready['ok'] = True; return
+                except (RuntimeError, socket.timeout, TimeoutError, OSError):
+                    pass
+                time.sleep(.15)
+            ready['ok'] = False
+        th = threading.Thread(target=probe_ready, daemon=True); th.start()
+        t_start = time.time(); spin = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+        while th.is_alive():
+            status(rows, f'{os.path.basename(src)} 여는 중 · 배치 계산 {time.time() - t_start:4.1f}s {spin[int(time.time() * 8) % len(spin)]}', cols)
+            th.join(.12)
+        log('ready', ready.get('ok'), f'{time.time() - t_start:.1f}s')
         br = Bridge(cdp, cols, rows_img, W, H, 'file://' + view if os.path.basename(src) == 'index.html' else None, cw, ch)
         resized = [False]
         signal.signal(signal.SIGWINCH, lambda *_: resized.__setitem__(0, True))
@@ -497,6 +516,9 @@ def main():
                      f'p 패닝 · ? 도움말 · q 종료 · 셀{cw}×{ch}[{cell_src}]'
                      f'{" 자리표시자" if use_unicode() else " 직접배치"}{warn}')
         last_input = time.time(); frames = 0; t_frame = 0
+        playing = False; play_pos = None
+        def set_density(d):
+            cdp.call('Emulation.setDeviceMetricsOverride', {'width': W, 'height': H, 'deviceScaleFactor': d, 'mobile': False})
         while True:
             if resized[0]:
                 resized[0] = False
@@ -506,7 +528,17 @@ def main():
                 out('\x1b[2J'); globals()['_grid'] = None; last_input = time.time()
             # 입력 뒤 1.2초는 이징 애니메이션이 있을 수 있어 계속 그리고, 그 뒤엔 입력을 기다린다
             busy = time.time() - last_input < 1.2
-            r = select.select([fd], [], [], .02 if busy else None)[0]
+            # 재생(스페이스) 중에는 입력이 없어도 화면이 바뀐다 — 뷰어에게 물어 계속 그린다
+            if not busy:
+                try:
+                    st = cdp.call('Runtime.evaluate', {'expression': 'window.__cs ? [__cs.playing, ...__cs.scrub] : null', 'returnByValue': True})['result'].get('value')
+                except (RuntimeError, socket.timeout, TimeoutError): st = None
+                now_playing = bool(st and st[0]); play_pos = (st[1], st[2]) if st else None
+                if now_playing != playing:
+                    playing = now_playing; set_density(PLAY_SS if playing else SS)   # 재생 중엔 가볍게, 끝나면 선명하게
+                    if not playing: last_input = time.time()                        # 마지막 한 장은 원래 밀도로
+                busy = busy or playing
+            r = select.select([fd], [], [], .02 if busy else .25)[0]
             if r:
                 data = os.read(fd, 65536)
                 # ESC 단독인지 시퀀스인지: 잠깐 더 기다려 본다
@@ -523,7 +555,8 @@ def main():
             if LOG:
                 try: log('frame', frames, f'{t_frame*1000:.0f}ms', len(shot), cdp.call('Runtime.evaluate', {'expression': 'JSON.stringify(window.__cs ? {th:__cs.cam.theta.toFixed(3), d:__cs.cam.dist.toFixed(1), tx:__cs.cam.tx.toFixed(1)} : {title:document.title, href:location.href.slice(-40), active:document.activeElement?.href || document.activeElement?.tagName, body:document.body.innerText.slice(0,80)})', 'returnByValue': True})['result'].get('value'))
                 except Exception as e: log('frame', frames, 'eval 실패', e)
-            status(rows, f'{help_line} · {t_frame*1000:.0f}ms'
+            prog = f' · ▶ {play_pos[0]}/{play_pos[1]}' if playing and play_pos else ''
+            status(rows, f'{help_line} · {t_frame*1000:.0f}ms{prog}'
                        f'{" ·픽셀" if br.pixel else ""}{" ·패닝" if br.pan else ""}', cols)
     finally:
         # 단계마다 따로 감싼다 — tmux 창이 먼저 닫히면 터미널 쓰기가 EIO 로 죽는데,
